@@ -23,3 +23,6 @@ node_modules/
 
 # macOS
 .DS_Store
+
+# Local-only doc (for sharing with Shay, not in repo)
+docs/OPTIMIZED_STEPS.md

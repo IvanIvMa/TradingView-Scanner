@@ -15,7 +15,6 @@ All alerts are sent via Telegram.
 ## Documentation
 
 - **[Manual](docs/MANUAL.md)** — full English guide: architecture, strategy, exit rules, schedule, setup
-- **[Optimized Steps](docs/OPTIMIZED_STEPS.md)** — how this build extends the Humbled Trader tutorial (step-by-step comparison)
 
 ## Requirements
 
