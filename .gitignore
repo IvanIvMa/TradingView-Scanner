@@ -1,0 +1,25 @@
+# Secrets
+.env
+
+# Python
+*.pyc
+__pycache__/
+
+# Logs
+*.log
+
+# Daily generated data (scanner outputs, watchlists, positions, states)
+premarket_gappers_*.json
+tjl_watchlist_*.json
+tjl_state_*.json
+positions_*.json
+backtest_*.json
+
+# Node
+node_modules/
+
+# Claude Code local settings
+.claude/
+
+# macOS
+.DS_Store
