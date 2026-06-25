@@ -139,9 +139,16 @@ bash daily_scanner.sh --merge --force    # Scanner A merge run
 python3 mcp_scanner_b.py                 # Scanner B via TradingView MCP (+ yfinance fallback)
 bash tjl_scanner.sh --force              # Scanner B, yfinance only
 python3 position_tracker.py --force      # Exit tracker
+bash start_tradingview.sh                # Ensure TradingView runs with the CDP debug port
+python3 mark_trades_tv.py --date 2026-06-25   # Draw a day's trades on the charts (--clear removes them)
 ```
 
 `--force` bypasses the time/DST gates for testing.
+
+> **Important:** the MCP path (Scanner B live data + chart markers) only works
+> when TradingView Desktop runs with `--remote-debugging-port=9222`. If it was
+> started normally, run `start_tradingview.sh` (or add it as a login item).
+> Otherwise everything silently falls back to yfinance.
 
 ---
 
@@ -155,6 +162,7 @@ python3 position_tracker.py --force      # Exit tracker
 | `position_tracker.py` | Exit monitoring |
 | `performance_log.py` | Weekly live track-record (equity curve PNG → Telegram) |
 | `mark_trades_tv.py` | Draws closed trades on TradingView charts (optional, via MCP) |
+| `start_tradingview.sh` | Ensures TradingView runs with the CDP debug port |
 | `launchd/*.plist` | The four scheduled jobs |
 | `docs/pipeline.svg` | Architecture diagram |
 | `backtest_tjl_amd.json` | PineScript backtest results |

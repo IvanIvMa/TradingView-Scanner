@@ -6,17 +6,19 @@
 # werden auf dem Chart des Tickers Entry-/Exit-Linien, die Trade-Strecke und ein
 # Label eingezeichnet — direkt über den MCP-Server (kein Claude nötig).
 #
-# Robust: ist TradingView Desktop nicht erreichbar, wird still übersprungen
-# (es ist ein Bonus; der Telegram-Track-Record läuft unabhängig).
+# Robust: ist TradingView Desktop nicht erreichbar, wird still übersprungen.
+# Idempotent: gezeichnete entity-IDs werden in tv_marked_*.json gespeichert,
+# sodass Redraw/Clear gezielt nur die eigenen Markierungen anfassen.
 #
 # Nutzung:
 #   python3 mark_trades_tv.py                 # heutige Trades markieren
 #   python3 mark_trades_tv.py --date 2026-06-25
-#   python3 mark_trades_tv.py --dry           # nur Plan zeigen, nichts zeichnen
-#   python3 mark_trades_tv.py --force-redraw  # bereits markierte erneut zeichnen
+#   python3 mark_trades_tv.py --dry           # nur Plan zeigen
+#   python3 mark_trades_tv.py --force-redraw  # alte Markierungen entfernen + neu
+#   python3 mark_trades_tv.py --clear         # alle Markierungen des Tages entfernen
 # =============================================================================
 
-import os, sys, json, glob, time
+import os, sys, json, time
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -30,6 +32,7 @@ PARTIAL_PCT = 50
 
 DRY = "--dry" in sys.argv
 FORCE = "--force-redraw" in sys.argv
+CLEAR = "--clear" in sys.argv
 
 ENTRY_C = "#2563eb"   # blau
 WIN_C   = "#16a34a"   # grün
@@ -59,24 +62,92 @@ def realized_pct(pos):
     return round(fr * 100, 2)
 
 
+def load_marked(path):
+    if not os.path.exists(path):
+        return {}
+    try:
+        raw = json.load(open(path))
+    except Exception:
+        return {}
+    if isinstance(raw, list):            # altes Format: nur Symbole
+        return {s: [] for s in raw}
+    return raw                           # {symbol: [entity_ids]}
+
+
+def health_ok(mcp):
+    h = mcp.tool("tv_health_check")
+    return bool(h and h.get("cdp_connected"))
+
+
+def draw_trade(mcp, symbol, p):
+    """zeichnet einen Trade; gibt (entity_ids, realized_pct) zurück."""
+    ret = realized_pct(p)
+    entry, ex = p["entry_price"], p.get("exit_price")
+    ets, xts = int(p.get("entry_ts") or 0), int(p.get("exit_ts") or 0)
+    anchor = ets or xts
+    exit_c = WIN_C if (ret or 0) >= 0 else LOSS_C
+    ids = []
+
+    def shape(args):
+        r = mcp.tool("draw_shape", args)
+        if isinstance(r, dict) and r.get("entity_id"):
+            ids.append(r["entity_id"])
+
+    shape({"shape": "horizontal_line", "point": {"time": anchor, "price": entry},
+           "overrides": json.dumps({"linecolor": ENTRY_C, "linewidth": 2, "linestyle": 2})})
+    shape({"shape": "horizontal_line", "point": {"time": xts or anchor, "price": ex},
+           "overrides": json.dumps({"linecolor": exit_c, "linewidth": 2})})
+    if ets and xts:
+        shape({"shape": "trend_line",
+               "point": {"time": ets, "price": entry},
+               "point2": {"time": xts, "price": ex},
+               "overrides": json.dumps({"linecolor": exit_c, "linewidth": 2})})
+    sign = "+" if (ret or 0) >= 0 else ""
+    shape({"shape": "text", "point": {"time": anchor, "price": max(entry, ex)},
+           "text": f"TJL {symbol} {sign}{ret}% · {p.get('exit_reason', '')}",
+           "overrides": json.dumps({"color": exit_c, "fontsize": 12, "bold": True})})
+    return ids, ret
+
+
+def remove_ids(mcp, symbol, ids):
+    mcp.tool("chart_set_symbol", {"symbol": symbol})
+    time.sleep(0.3)
+    for i in ids:
+        mcp.tool("draw_remove_one", {"entity_id": i})
+
+
 def main():
     d = arg_date()
+    marked_file = os.path.join(HERE, f"tv_marked_{d}.json")
+
+    # --- CLEAR: alle Markierungen des Tages entfernen ---
+    if CLEAR:
+        marked = load_marked(marked_file)
+        if not marked:
+            log("nichts zu löschen."); return
+        mcp = MCPClient(MCP_SERVER)
+        try:
+            mcp.handshake()
+            if not health_ok(mcp):
+                log("TradingView nicht erreichbar."); return
+            for s, ids in marked.items():
+                remove_ids(mcp, s, ids)
+                log(f"  ✗ {s}: {len(ids)} Markierung(en) entfernt")
+        finally:
+            mcp.close()
+        os.remove(marked_file)
+        log("Markierungen gelöscht."); return
+
+    # --- normaler Lauf: Trades markieren ---
     pfile = os.path.join(HERE, f"positions_{d}.json")
     if not os.path.exists(pfile):
         log(f"keine positions-Datei für {d} — nichts zu tun."); return
-    positions = json.load(open(pfile))
-    closed = {s: p for s, p in positions.items() if p.get("status") == "closed"}
+    closed = {s: p for s, p in json.load(open(pfile)).items() if p.get("status") == "closed"}
     if not closed:
         log(f"keine geschlossenen Trades für {d}."); return
 
-    marked_file = os.path.join(HERE, f"tv_marked_{d}.json")
-    marked = set()
-    if os.path.exists(marked_file) and not FORCE:
-        try:
-            marked = set(json.load(open(marked_file)))
-        except Exception:
-            pass
-    todo = {s: p for s, p in closed.items() if s not in marked}
+    marked = load_marked(marked_file)
+    todo = closed if FORCE else {s: p for s, p in closed.items() if s not in marked}
     if not todo:
         log("alle Trades bereits markiert."); return
     log(f"{len(todo)} Trade(s) zu markieren: {', '.join(todo)}")
@@ -90,45 +161,23 @@ def main():
     mcp = MCPClient(MCP_SERVER)
     try:
         mcp.handshake()
-        h = mcp.tool("tv_health_check")
-        if not h or not h.get("cdp_connected"):
+        if not health_ok(mcp):
             log("TradingView nicht erreichbar — übersprungen (Bonus, kein Fehler).")
             return
         for s, p in todo.items():
-            ret = realized_pct(p)
-            entry, ex = p["entry_price"], p.get("exit_price")
-            ets, xts = int(p.get("entry_ts") or 0), int(p.get("exit_ts") or 0)
-            anchor = ets or xts
-            exit_c = WIN_C if (ret or 0) >= 0 else LOSS_C
-
             mcp.tool("chart_set_symbol", {"symbol": s})
             time.sleep(0.3)
-            # Entry-Linie (blau, gestrichelt)
-            mcp.tool("draw_shape", {"shape": "horizontal_line",
-                                    "point": {"time": anchor, "price": entry},
-                                    "overrides": json.dumps({"linecolor": ENTRY_C, "linewidth": 2, "linestyle": 2})})
-            # Exit-Linie (grün/rot)
-            mcp.tool("draw_shape", {"shape": "horizontal_line",
-                                    "point": {"time": xts or anchor, "price": ex},
-                                    "overrides": json.dumps({"linecolor": exit_c, "linewidth": 2})})
-            # Trade-Strecke (wenn beide Zeitstempel da)
-            if ets and xts:
-                mcp.tool("draw_shape", {"shape": "trend_line",
-                                        "point": {"time": ets, "price": entry},
-                                        "point2": {"time": xts, "price": ex},
-                                        "overrides": json.dumps({"linecolor": exit_c, "linewidth": 2})})
-            # Label
+            if FORCE and marked.get(s):          # alte Markierungen erst weg
+                for i in marked[s]:
+                    mcp.tool("draw_remove_one", {"entity_id": i})
+            ids, ret = draw_trade(mcp, s, p)
+            marked[s] = ids
             sign = "+" if (ret or 0) >= 0 else ""
-            mcp.tool("draw_shape", {"shape": "text",
-                                    "point": {"time": anchor, "price": max(entry, ex)},
-                                    "text": f"TJL {s} {sign}{ret}% · {p.get('exit_reason', '')}",
-                                    "overrides": json.dumps({"color": exit_c, "fontsize": 12, "bold": True})})
-            marked.add(s)
-            log(f"  ✓ {s} markiert ({sign}{ret}%)")
+            log(f"  ✓ {s} markiert ({sign}{ret}%, {len(ids)} Objekte)")
     finally:
         mcp.close()
 
-    json.dump(sorted(marked), open(marked_file, "w"))
+    json.dump(marked, open(marked_file, "w"), indent=2)
     log("fertig.")
 
 
