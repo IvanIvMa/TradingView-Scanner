@@ -4,12 +4,14 @@
 <dict>
     <key>Label</key>
     <string>com.tradingview.tjlscanner</string>
+    <!-- Scanner B via mcp_scanner_b.py: TradingView-Echtzeit (direkt am MCP-Server,
+         kein Claude noetig), mit automatischem yfinance-Fallback. -->
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/ivan/TradingViewScanner/tjl_scanner.sh</string>
+        <string>/Library/Frameworks/Python.framework/Versions/3.14/bin/python3</string>
+        <string>/Users/ivan/TradingViewScanner/mcp_scanner_b.py</string>
     </array>
-    <!-- Mo-Fr 16:00-21:30 Berlin = 10:00-15:30 ET (TJL-Einstiegsfenster, stoppt am Gate) -->
+    <!-- Mo-Fr 16:00-21:30 Berlin = 10:00-15:30 ET (stoppt am Einstiegs-Gate) -->
     <key>StartCalendarInterval</key>
     <array>
         <dict>
@@ -320,7 +322,7 @@
     <key>EnvironmentVariables</key>
     <dict>
         <key>PATH</key>
-        <string>/usr/local/bin:/usr/bin:/bin:/Library/Frameworks/Python.framework/Versions/3.14/bin</string>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/Library/Frameworks/Python.framework/Versions/3.14/bin</string>
     </dict>
 </dict>
 </plist>

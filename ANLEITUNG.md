@@ -341,19 +341,19 @@ Das ISIN-Mapping wird automatisch aktualisiert, wenn neue Ticker auftauchen.
 
 **Effekt:** Scanner A läuft seit dem Fix zuverlässig, auch bei 100 Tickern.
 
-### Verbesserung 6 — TradingView-Live-Daten via CronCreate
+### Verbesserung 6 — TradingView-Live-Daten ohne Claude-Session (`mcp_scanner_b.py`)
 
-**Problem:** Scanner B nutzte im Cronjob nur yfinance-Daten (leicht verzögert, kein Echtzeit-Volumen). Die ursprüngliche Anleitung von Shay sah TradingView-Echtzeitdaten vor, aber der MCP braucht eine aktive Claude-Session.
+**Problem:** Scanner B nutzte im Cronjob nur yfinance-Daten (leicht verzögert, kein Echtzeit-Volumen). TradingView-Echtzeitdaten waren bisher nur über den MCP in einer aktiven Claude-Session erreichbar. Erste Lösung war ein **CronCreate**-Job, der Claude alle 30 Min triggerte — aber der war session-only (stirbt mit Claude) und lief nach 7 Tagen aus.
 
-**Lösung:** Auf dem Mac Mini läuft Claude permanent. Über **CronCreate** (Claude-interner Scheduler) wird Scanner B automatisch alle 30 Minuten während der Handelszeit getriggert. Claude:
-1. Liest die heutigen Gappers aus Scanner A
-2. Lädt jeden Ticker in TradingView Desktop
-3. Holt Daily-OHLCV (SMA200), 1-Min-Bars (PMH/HOD) und Live-Quote über den MCP
-4. Übergibt die Daten an `tjl_scanner.sh --mcp-data '<JSON>'`
+**Lösung:** Der TradingView-MCP ist ein **lokaler stdio-Node-Prozess** (`tradingview-mcp/src/server.js`), der sich via CDP (Port 9222) mit TradingView Desktop verbindet. Man braucht Claude gar nicht, um ihn zu nutzen — `mcp_scanner_b.py` startet den Server selbst, spricht JSON-RPC und holt dieselben Daten:
+1. Heutige Gappers aus Scanner A laden
+2. MCP-Server starten + Handshake; `tv_health_check`
+3. Pro Ticker: Daily-OHLCV (prev_high/close), SMA200, Live-Quote über den MCP; PMH/HOD via yfinance (kumulative Maxima, Verzögerung egal)
+4. `tjl_scanner.sh --force --mcp-data '<JSON>'` aufrufen
 
-**Dual-Mode-Fallback:** Wenn Claude nicht offen ist, springt der launchd-Cronjob mit yfinance-Daten ein. Die Rechenlogik ist identisch — nur die Datenquelle wechselt.
+**Eingebauter Fallback:** Ist TradingView Desktop nicht erreichbar (Port 9222 zu), fällt das Script automatisch auf den reinen yfinance-Pfad (`tjl_scanner.sh`) zurück. Eine Datenquelle, ein launchd-Job, beste verfügbare Daten.
 
-**Einschränkung:** CronCreate-Jobs sind session-only (max. 7 Tage). Sie laufen nur solange die Claude-Session aktiv ist.
+**Vorteil ggü. CronCreate:** persistent (OS-Scheduler überlebt Neustarts), kein 7-Tage-Ablauf, keine Token-Kosten, keine Session-Abhängigkeit. Der launchd-Job `com.tradingview.tjlscanner` ruft jetzt `mcp_scanner_b.py` statt direkt `tjl_scanner.sh`.
 
 ---
 
@@ -437,7 +437,7 @@ Das System läuft jetzt täglich automatisch:
 | **15:00** | Scanner A startet automatisch (= 9:00 ET, 30 Min vor US-Öffnung) |
 | **15:00–15:30** | Premarket Gappers werden gescannt + News + Telegram |
 | **16:00–20:00** | Scanner B läuft alle 30 Min — **zwei parallele Pfade:** |
-| | → **CronCreate (MCP):** Claude holt TradingView-Echtzeitdaten (wenn Session aktiv) |
+| | → **mcp_scanner_b.py:** TradingView-Echtzeitdaten direkt am MCP-Server (kein Claude nötig), mit yfinance-Fallback |
 | | → **launchd (yfinance):** Automatischer Fallback (immer aktiv, auch ohne Claude) |
 | **16:00–22:00** | Position-Tracker überwacht offene Positionen (Exit-Alerts) |
 | **~21:45** | Zwangsschluss-Alert (15:45 ET) für noch offene Positionen |
@@ -518,7 +518,7 @@ Anfangs lag das Projekt unter `~/Documents`. Die automatischen Läufe schlugen *
 | News (premium) | Benzinga.com via Chrome | Day-Trading-Qualitäts-Headlines |
 | Backtesting | PineScript v6 (TradingView) | Historischer Strategie-Test |
 | Benachrichtigung | Telegram Bot API | Push-Alerts aufs Handy |
-| Automatisierung | macOS launchd (3 Jobs) + CronCreate | Scanner A (15:00) + Scanner B (16:00–20:00) + Exit-Tracker (20:30–22:00) |
+| Automatisierung | macOS launchd (4 Jobs) | Scanner A premarket + merge + Scanner B (mcp_scanner_b.py) + Exit-Tracker — alle persistent, ohne Claude-Session |
 | Zeitzone | Python ZoneInfo | Saubere ET/CEST-Umrechnung |
 
 ### Projektstruktur
