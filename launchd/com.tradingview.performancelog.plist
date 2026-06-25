@@ -1,0 +1,29 @@
+<?xml version="1.0" encoding="UTF-8"?>
+<!DOCTYPE plist PUBLIC "-//Apple//DTD PLIST 1.0//EN" "http://www.apple.com/DTDs/PropertyList-1.0.dtd">
+<plist version="1.0">
+<dict>
+    <key>Label</key>
+    <string>com.tradingview.performancelog</string>
+    <key>ProgramArguments</key>
+    <array>
+        <string>/Library/Frameworks/Python.framework/Versions/3.14/bin/python3</string>
+        <string>/Users/ivan/tradingviewscanner/performance_log.py</string>
+    </array>
+    <!-- Freitag 22:15 Berlin = 16:15 ET (nach Boersenschluss + EOD-Tracker) -->
+    <key>StartCalendarInterval</key>
+    <dict>
+        <key>Weekday</key><integer>5</integer>
+        <key>Hour</key><integer>22</integer>
+        <key>Minute</key><integer>15</integer>
+    </dict>
+    <key>StandardOutPath</key>
+    <string>/Users/ivan/tradingviewscanner/launchd_perflog_stdout.log</string>
+    <key>StandardErrorPath</key>
+    <string>/Users/ivan/tradingviewscanner/launchd_perflog_stderr.log</string>
+    <key>EnvironmentVariables</key>
+    <dict>
+        <key>PATH</key>
+        <string>/opt/homebrew/bin:/usr/local/bin:/usr/bin:/bin:/Library/Frameworks/Python.framework/Versions/3.14/bin</string>
+    </dict>
+</dict>
+</plist>

@@ -93,6 +93,7 @@ Runs every **5 minutes**, 10:00–16:00 ET, so exit alerts arrive within ~5 min.
 | Scanner A — merge (new gappers after open) | 9:45 | 15:45 |
 | Scanner B | every 30 min, 10:00–15:30 | 16:00–21:30 |
 | Position Tracker | every 5 min, 10:00–16:00 | 16:00–22:00 |
+| Performance log | Friday after close | Friday 22:15 |
 
 **DST robustness:** EU and US switch daylight saving on different dates (≈3 weeks
 a year the Berlin↔ET offset drifts by 1h). Each Scanner A `launchd` job fires at
@@ -150,6 +151,7 @@ python3 position_tracker.py --force      # Exit tracker
 | `tjl_scanner.sh` | Scanner B (TJL check + Telegram) |
 | `mcp_scanner_b.py` | Drives the TradingView MCP directly (no Claude) |
 | `position_tracker.py` | Exit monitoring |
+| `performance_log.py` | Weekly live track-record (equity curve PNG → Telegram) |
 | `launchd/*.plist` | The four scheduled jobs |
 | `docs/pipeline.svg` | Architecture diagram |
 | `backtest_tjl_amd.json` | PineScript backtest results |

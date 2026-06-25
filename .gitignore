@@ -26,3 +26,5 @@ node_modules/
 
 # Local-only doc (for sharing with Shay, not in repo)
 docs/OPTIMIZED_STEPS.md
+performance_equity.png
+test_equity.png
