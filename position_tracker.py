@@ -227,6 +227,7 @@ def main():
             pos["status"] = "closed"
             pos["exit_price"] = stop_px
             pos["exit_reason"] = "trailing_stop"
+            pos["exit_ts"] = t
             alerts.append(
                 f"🔴 <b>{sym} — Trailing Stop ausgelöst</b> @ ${stop_px} ({fmt_et(t)})\n"
                 f"   Strategie: Restposition schließen\n"
@@ -242,6 +243,7 @@ def main():
             pos["status"] = "closed"
             pos["exit_price"] = round(curr, 2)
             pos["exit_reason"] = "eod"
+            pos["exit_ts"] = now_et.timestamp()
             alerts.append(
                 f"🟠 <b>{sym} — Börsenschluss naht</b>\n"
                 f"   Strategie: Position schließen (kein Overnight)\n"
