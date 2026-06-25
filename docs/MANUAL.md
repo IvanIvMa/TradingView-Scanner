@@ -117,6 +117,7 @@ US-market time year-round.
 ## 7. Setup
 
 1. **TradingView Desktop** running with remote debugging (`--remote-debugging-port=9222`).
+   > 💡 New to TradingView? [Sign up here](https://de.tradingview.com/pricing/?share_your_love=IvIvMa) *(referral link — a paid plan started through it supports this project; a free account is enough to run the scanner).*
 2. **TradingView MCP** installed at `tradingview-mcp/` (`node`, `chrome-remote-interface`).
 3. **Python 3.14** with `yfinance`, `pandas`, `requests`.
 4. **`.env`** in the project root:

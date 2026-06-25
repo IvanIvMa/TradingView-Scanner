@@ -139,6 +139,9 @@ In 12 Schritten . Hier eine Beschreibung in einfacher Sprache:
 
 **Warum die Desktop-App und nicht die Webseite?** Die Desktop-Version ist eine spezielle Anwendung, die einen versteckten "Debug-Modus" zulässt — nur über diesen Modus kann Claude auf die Charts zugreifen. Die Browser-Version hat das nicht.
 
+> 💡 **TradingView-Empfehlungslink:** [de.tradingview.com/pricing](https://de.tradingview.com/pricing/?share_your_love=IvIvMa)
+> *(Empfehlungslink — wenn du darüber einen kostenpflichtigen Plan abschließt, unterstützt das dieses Projekt. Für die Nutzung des Scanners reicht ein kostenloses TradingView-Konto.)*
+
 **Was wurde gemacht?**
 - TradingView Desktop von der offiziellen Seite heruntergeladen und installiert
 - In TradingView eingeloggt
