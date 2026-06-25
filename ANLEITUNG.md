@@ -331,6 +331,30 @@ Beispiel: AMD = US0079031078
 
 Das ISIN-Mapping wird automatisch aktualisiert, wenn neue Ticker auftauchen.
 
+### Verbesserung 5 — Chunked Downloads (Stabilität)
+
+**Problem:** Scanner A stürzte ab mit `OSError: Too many open files`. yfinance lud alle ~100 Ticker gleichzeitig herunter (`threads=True`), was das macOS-Dateideskriptor-Limit (256) überschritt. Folge: DNS-Fehler, SQLite-Fehler, kein Telegram.
+
+**Lösung:** Zwei Maßnahmen:
+1. `ulimit -n 4096` — erhöht das Limit offener Dateien auf 4.096
+2. **Chunked Download** — die ~100 Ticker werden in Gruppen von 25 heruntergeladen statt alle gleichzeitig
+
+**Effekt:** Scanner A läuft seit dem Fix zuverlässig, auch bei 100 Tickern.
+
+### Verbesserung 6 — TradingView-Live-Daten via CronCreate
+
+**Problem:** Scanner B nutzte im Cronjob nur yfinance-Daten (leicht verzögert, kein Echtzeit-Volumen). Die ursprüngliche Anleitung von Shay sah TradingView-Echtzeitdaten vor, aber der MCP braucht eine aktive Claude-Session.
+
+**Lösung:** Auf dem Mac Mini läuft Claude permanent. Über **CronCreate** (Claude-interner Scheduler) wird Scanner B automatisch alle 30 Minuten während der Handelszeit getriggert. Claude:
+1. Liest die heutigen Gappers aus Scanner A
+2. Lädt jeden Ticker in TradingView Desktop
+3. Holt Daily-OHLCV (SMA200), 1-Min-Bars (PMH/HOD) und Live-Quote über den MCP
+4. Übergibt die Daten an `tjl_scanner.sh --mcp-data '<JSON>'`
+
+**Dual-Mode-Fallback:** Wenn Claude nicht offen ist, springt der launchd-Cronjob mit yfinance-Daten ein. Die Rechenlogik ist identisch — nur die Datenquelle wechselt.
+
+**Einschränkung:** CronCreate-Jobs sind session-only (max. 7 Tage). Sie laufen nur solange die Claude-Session aktiv ist.
+
 ---
 
 ## Ergebnisse und Interpretation
@@ -412,7 +436,9 @@ Das System läuft jetzt täglich automatisch:
 |---|---|
 | **15:00** | Scanner A startet automatisch (= 9:00 ET, 30 Min vor US-Öffnung) |
 | **15:00–15:30** | Premarket Gappers werden gescannt + News + Telegram |
-| **16:00–20:00** | Scanner B läuft alle 30 Min (TJL-Einstiegssignale) + öffnet Beobachtung bei PASS |
+| **16:00–20:00** | Scanner B läuft alle 30 Min — **zwei parallele Pfade:** |
+| | → **CronCreate (MCP):** Claude holt TradingView-Echtzeitdaten (wenn Session aktiv) |
+| | → **launchd (yfinance):** Automatischer Fallback (immer aktiv, auch ohne Claude) |
 | **16:00–22:00** | Position-Tracker überwacht offene Positionen (Exit-Alerts) |
 | **~21:45** | Zwangsschluss-Alert (15:45 ET) für noch offene Positionen |
 | **22:00** | US-Markt schließt, System ruht, Positionen werden zurückgesetzt |
@@ -441,7 +467,7 @@ Drei getrennte launchd-Jobs:
 - Scanner B: `com.tradingview.tjlscanner` (Mo–Fr alle 30 Min, 16:00–20:00)
 - Exit-Tracker: `com.tradingview.positiontracker` (Mo–Fr 20:30–22:00, Spätfenster für EOD)
 
-- **Manuell starten**: `bash daily_scanner.sh` · `bash tjl_scanner.sh --force` · `python3 position_tracker.py --force`
+- **Manuell starten**: `bash daily_scanner.sh` · `bash tjl_scanner.sh --force` · `bash tjl_scanner.sh --force --mcp-data '<JSON>'` · `python3 position_tracker.py --force`
 - **Pausieren**: launchd-Job mit `launchctl unload` deaktivieren
 - **Exit-Parameter anpassen**: Werte (Trailing %, ATR-Ziel) oben in `position_tracker.py` ändern
 - **Filter anpassen**: Werte (Gap, Preis) in den Scripts ändern
@@ -492,7 +518,7 @@ Anfangs lag das Projekt unter `~/Documents`. Die automatischen Läufe schlugen *
 | News (premium) | Benzinga.com via Chrome | Day-Trading-Qualitäts-Headlines |
 | Backtesting | PineScript v6 (TradingView) | Historischer Strategie-Test |
 | Benachrichtigung | Telegram Bot API | Push-Alerts aufs Handy |
-| Automatisierung | macOS launchd (3 Jobs) | Scanner A (15:00) + Scanner B (16:00–20:00) + Exit-Tracker (20:30–22:00) |
+| Automatisierung | macOS launchd (3 Jobs) + CronCreate | Scanner A (15:00) + Scanner B (16:00–20:00) + Exit-Tracker (20:30–22:00) |
 | Zeitzone | Python ZoneInfo | Saubere ET/CEST-Umrechnung |
 
 ### Projektstruktur
@@ -557,10 +583,11 @@ Zeitgesteuert über drei macOS-launchd-Jobs (in ~/Library/LaunchAgents/):
 
 Was wir noch erweitern könnten:
 
+- **Strategie-Analyse und Optimierung**: Die TJL-Watchlists speichern aktuell nur PASS/fail — nicht die Zahlenwerte (Kurs, PMH, HOD, SMA200, Gap%). Erweitert man die Speicherung um numerische Werte und Forward Returns (Kursverhalten 1h, 2h, EOD nach dem Signal), kann man nach einigen Wochen Daten analysieren: Bei welchem Gap% kommen die besten Signale? Wie oft führt fail_intraday doch noch zu einem Breakout?
 - **Paper-Trading-Anbindung an Interactive Brokers**: tatsächliche (virtuelle) Order-Ausführung statt nur Benachrichtigung.
 - **Weitere Strategien**: Short-Setups (Trend Join Short), Mean Reversion, Earnings Plays
 - **Watchlist-Anpassung**: Statt Yahoo Top 100 eigene Sektor-Universen (Halbleiter, AI, Energie)
-- **Performance-Tracking**: Tagebuch der Signale + tatsächliche Trades + Performance-Auswertung
+- **Alternative Datenquellen**: Yahoo's `day_gainers` Screener könnte langfristig instabil sein — Alternativen wie Finviz, Unusual Whales oder direkte Börsendaten-APIs wären robuster
 
 ---
 

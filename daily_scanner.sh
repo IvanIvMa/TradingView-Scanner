@@ -1,23 +1,35 @@
 #!/usr/bin/env bash
 # =============================================================================
-# Daily Scanner v2 — Yahoo Top 100 Gainers + echte Premarket-Daten + Telegram
+# Daily Scanner v3 — Yahoo Top 100 Gainers + echte Premarket-Daten + Telegram
 # =============================================================================
-# Läuft täglich Mo-Fr um 15:00 Berlin (= 9:00 ET, 30 Min vor US-Öffnung).
+# Läuft täglich Mo-Fr:
+#   - 15:00 Berlin (= 9:00 ET) → Premarket-Scan (30 Min vor US-Öffnung)
+#   - 15:45 Berlin (= 9:45 ET) → Merge-Scan (nach Marktöffnung, neue Ticker ergänzen)
 #
 # Ablauf:
 #   1. Yahoo Screener API → Top 100 Tagesgewinner (Symbol-Vorauswahl)
 #   2. yfinance Batch-Download 1-Min-Bars mit Premarket-Daten
 #   3. Eigene Premarket-Berechnung mit ET-Zeitstempel-Filter
-#      - Vortag-Close: letzte Bar vor 16:00 ET
-#      - Premarket: Bars zwischen 4:00 und 9:30 ET heute
 #   4. Filter: Gap>5%, Preis>$3, Premarket-Volumen>50K
 #   5. News-Katalysator via Google News RSS
 #   6. Telegram-Bericht mit Vergleich Premarket-Gap vs. Yahoo-Anzeige
+#
+# Nutzung:
+#   bash daily_scanner.sh            # normaler Lauf (überschreibt)
+#   bash daily_scanner.sh --merge    # ergänzt nur neue Ticker zur bestehenden Liste
 # =============================================================================
 
 set -euo pipefail
 cd "$(dirname "$0")"
 ulimit -n 4096 2>/dev/null || true
+
+MERGE=0
+while [ $# -gt 0 ]; do
+    case "$1" in
+        --merge) MERGE=1 ;;
+    esac
+    shift
+done
 
 if [ ! -f .env ]; then
     echo "FEHLER: .env Datei nicht gefunden" >&2
@@ -35,7 +47,11 @@ TIME=$(date +%H:%M)
 OUTFILE="premarket_gappers_${DATE}.json"
 LOG="daily_scanner_${DATE}.log"
 
-echo "=== Daily Scanner v2 — $DATE $TIME ===" | tee "$LOG"
+if [ "$MERGE" = "1" ]; then
+    echo "=== Daily Scanner v3 (MERGE) — $DATE $TIME ===" | tee -a "$LOG"
+else
+    echo "=== Daily Scanner v3 — $DATE $TIME ===" | tee "$LOG"
+fi
 
 send_telegram() {
     local msg="$1"
@@ -66,8 +82,8 @@ SCREENER_JSON=$(curl -s --max-time 15 \
     "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved?scrIds=day_gainers&count=100" \
     -H "User-Agent: Mozilla/5.0")
 
-python3 - "$OUTFILE" "$SCREENER_JSON" << 'PYEOF'
-import sys, json, subprocess
+MERGE_FLAG=$MERGE python3 - "$OUTFILE" "$SCREENER_JSON" << 'PYEOF'
+import sys, json, subprocess, os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
@@ -76,11 +92,22 @@ import yfinance as yf
 BERLIN = ZoneInfo("Europe/Berlin")
 ET = ZoneInfo("America/New_York")
 outfile = sys.argv[1]
+merge_mode = os.environ.get("MERGE_FLAG") == "1"
 
 MIN_GAP = 5.0
 MIN_PRICE = 3.0
 MIN_VOLUME = 50_000
 TOP_N = 10
+
+# Im Merge-Modus: bestehende Ticker laden um Duplikate zu vermeiden
+existing_symbols = set()
+existing_gappers = []
+if merge_mode and os.path.exists(outfile):
+    with open(outfile) as f:
+        prev = json.load(f)
+    existing_gappers = prev.get("gappers", [])
+    existing_symbols = {g["symbol"] for g in existing_gappers}
+    print(f"  MERGE-Modus: {len(existing_symbols)} bestehende Gappers werden beibehalten")
 
 # Yahoo Screener Daten vom Shell-Script
 yahoo_data = json.loads(sys.argv[2])
@@ -90,18 +117,46 @@ print(f"  Yahoo Screener: {len(yahoo_quotes)} Top-Gainer geladen")
 
 # Yahoo's Gap-Anzeige für Vergleich merken
 yahoo_pct_map = {}
+yahoo_name_map = {}
 tickers = []
 for q in yahoo_quotes:
     sym = q.get("symbol")
     if not sym:
         continue
-    # Forex-Paare, Krypto, Indices ausschließen
     if any(c in sym for c in ["=", "^", "-"]):
         continue
     tickers.append(sym)
     yahoo_pct_map[sym] = float(q.get("regularMarketChangePercent") or 0)
+    yahoo_name_map[sym] = q.get("shortName") or q.get("longName") or ""
+
+# Im Merge-Modus: Firmennamen für alte Gappers nachpflegen
+if merge_mode and existing_gappers:
+    missing_name_syms = [g["symbol"] for g in existing_gappers
+                         if not g.get("name") and g["symbol"] not in yahoo_name_map]
+    if missing_name_syms:
+        for ms in missing_name_syms:
+            try:
+                ti = yf.Ticker(ms)
+                n = (ti.info or {}).get("shortName") or (ti.info or {}).get("longName") or ""
+                if n:
+                    yahoo_name_map[ms] = n
+            except Exception:
+                pass
+    for g in existing_gappers:
+        if not g.get("name") and g["symbol"] in yahoo_name_map:
+            g["name"] = yahoo_name_map[g["symbol"]]
 
 print(f"  {len(tickers)} Aktien-Ticker (ohne FX/Krypto/Indices)")
+
+# Im Merge-Modus: nur neue Ticker downloaden
+if merge_mode:
+    new_tickers = [t for t in tickers if t not in existing_symbols]
+    print(f"  Davon NEU (nicht im 15:00-Lauf): {len(new_tickers)}")
+    if not new_tickers:
+        print("  Keine neuen Ticker — nichts zu tun.")
+        # Bestehende Datei unverändert lassen
+        sys.exit(0)
+    tickers = new_tickers
 
 # --- 1b. Batch-Download 1-Min-Bars MIT Premarket (in Chunks) ---
 import pandas as pd
@@ -208,6 +263,7 @@ for sym in tickers:
 
         results.append({
             "symbol": sym,
+            "name": yahoo_name_map.get(sym, ""),
             "isin": isin_map.get(sym),
             "prev_close": round(prev_close, 2),
             "premarket_price": round(pm_price, 2) if pm_price else None,
@@ -261,35 +317,58 @@ for r in results:
 # Sortieren nach Premarket-Gap (oder Intraday wenn Premarket fehlt)
 filtered.sort(key=lambda r: get_effective_gap(r), reverse=True)
 filtered = filtered[:TOP_N]
-for i, r in enumerate(filtered, 1):
+
+# Im Merge-Modus: neue Gappers an bestehende anhängen, nach Gap neu sortieren
+if merge_mode and existing_gappers:
+    merged = existing_gappers + filtered
+    merged.sort(key=lambda r: get_effective_gap(r) or 0, reverse=True)
+    merged = merged[:TOP_N]
+    new_count = len(filtered)
+else:
+    merged = filtered
+    new_count = len(filtered)
+
+for i, r in enumerate(merged, 1):
     r["rank"] = i
+
+universe_src = "Yahoo Screener day_gainers (Top 100)"
+if merge_mode:
+    universe_src += " — MERGE (15:45 Ergänzung)"
 
 result_obj = {
     "scanned_at": datetime.now(BERLIN).isoformat(),
     "scan_time_et": datetime.now(ET).strftime("%H:%M ET"),
-    "universe_source": "Yahoo Screener day_gainers (Top 100)",
-    "universe_size": len(tickers),
+    "universe_source": universe_src,
+    "universe_size": len(tickers) + len(existing_symbols),
     "filters": {
         "min_gap_pct": MIN_GAP,
         "min_price": MIN_PRICE,
         "min_premarket_volume": MIN_VOLUME,
         "top_n": TOP_N,
     },
-    "gappers": filtered,
+    "gappers": merged,
 }
+if merge_mode:
+    result_obj["merge_new_gappers"] = new_count
+
 with open(outfile, "w") as f:
     json.dump(result_obj, f, indent=2)
 
-print(f"\n  {len(filtered)} Gappers nach Filter:")
-for r in filtered:
-    pm = r["premarket_gap_pct"]
-    yh = r["yahoo_displayed_gap_pct"]
-    mode = r["filter_mode"]
+if merge_mode:
+    print(f"\n  {new_count} NEUE Gappers gefunden, {len(merged)} gesamt nach Merge:")
+else:
+    print(f"\n  {len(merged)} Gappers nach Filter:")
+for r in merged:
+    pm = r.get("premarket_gap_pct")
+    yh = r.get("yahoo_displayed_gap_pct", 0)
+    mode = r.get("filter_mode", "?")
+    is_new = merge_mode and r["symbol"] not in existing_symbols
+    marker = " 🆕" if is_new else ""
     if pm is not None:
-        print(f"    {r['rank']}. {r['symbol']:6s} Premarket: {pm:+.2f}%  Yahoo zeigt: {yh:+.2f}%  Diff: {(pm-yh):+.2f}pp  [{mode}]")
+        print(f"    {r['rank']}. {r['symbol']:6s} Premarket: {pm:+.2f}%  Yahoo zeigt: {yh:+.2f}%  [{mode}]{marker}")
     else:
-        intra = r["intraday_gap_pct"]
-        print(f"    {r['rank']}. {r['symbol']:6s} Intraday: {intra:+.2f}% (kein Premarket)  Yahoo: {yh:+.2f}%  [{mode}]")
+        intra = r.get("intraday_gap_pct", 0)
+        print(f"    {r['rank']}. {r['symbol']:6s} Intraday: {intra:+.2f}% (kein Premarket)  [{mode}]{marker}")
 PYEOF
 
 echo "" | tee -a "$LOG"
@@ -299,12 +378,14 @@ echo "" | tee -a "$LOG"
 # =============================================================================
 echo "--- Schritt 2: News-Katalysatoren (Google News RSS) ---" | tee -a "$LOG"
 
+# Nur Gappers ohne Katalysator (im Merge: nur die neuen)
 TICKERS=$(python3 -c "
 import json
 with open('$OUTFILE') as f:
     data = json.load(f)
 for g in data.get('gappers', []):
-    print(g['symbol'])
+    if not g.get('catalyst'):
+        print(g['symbol'])
 ")
 
 if [ -n "$TICKERS" ]; then
@@ -338,76 +419,99 @@ echo "" | tee -a "$LOG"
 # =============================================================================
 echo "--- Schritt 3: Telegram senden ---" | tee -a "$LOG"
 
-MSG=$(python3 - "$OUTFILE" << 'PYEOF'
-import json, sys
+MSG=$(MERGE_FLAG=$MERGE python3 - "$OUTFILE" << 'PYEOF'
+import json, sys, os
 from datetime import datetime
 from zoneinfo import ZoneInfo
 
 BERLIN = ZoneInfo("Europe/Berlin")
 now = datetime.now(BERLIN).strftime("%d.%m.%Y %H:%M")
+is_merge = os.environ.get("MERGE_FLAG") == "1"
 
 with open(sys.argv[1]) as f:
     data = json.load(f)
 
 gappers = data.get("gappers", [])
+new_count = data.get("merge_new_gappers", 0)
 
-lines = [f"📊 <b>Daily Premarket Report — {now} CEST</b>"]
-lines.append(f"<i>Universe: {data.get('universe_size', '?')} Aktien (Yahoo Top Gainers)</i>\n")
+if is_merge and new_count == 0:
+    print("")
+    sys.exit(0)
+
+if is_merge:
+    lines = [f"🔄 <b>Scanner A UPDATE — {now} CEST</b>"]
+    lines.append(f"<i>{new_count} neue Gappers nach Marktöffnung entdeckt!</i>\n")
+else:
+    lines = [f"📊 <b>Daily Premarket Report — {now} CEST</b>"]
+    lines.append(f"<i>Universe: {data.get('universe_size', '?')} Aktien (Yahoo Top Gainers)</i>\n")
 
 if gappers:
-    has_premarket = any(g.get("premarket_gap_pct") is not None for g in gappers)
-    if has_premarket:
-        lines.append(f"<b>{len(gappers)} Gappers gefunden:</b>")
+    if not is_merge:
+        has_premarket = any(g.get("premarket_gap_pct") is not None for g in gappers)
+        if has_premarket:
+            lines.append(f"<b>{len(gappers)} Gappers gefunden:</b>")
+        else:
+            lines.append(f"<b>{len(gappers)} Gappers (Markt offen — Intraday-Daten):</b>")
     else:
-        lines.append(f"<b>{len(gappers)} Gappers (Markt offen — Intraday-Daten):</b>")
+        lines.append(f"<b>Aktualisierte Liste ({len(gappers)} Gappers):</b>")
     lines.append("")
 
     for g in gappers:
         sym = g["symbol"]
+        name = g.get("name") or ""
         isin = g.get("isin") or "—"
+        isin_part = f" ({isin})" if isin != "—" else ""
+        name_part = f" — {name}" if name else ""
         pm = g.get("premarket_gap_pct")
-        yh = g.get("yahoo_displayed_gap_pct")
+        yh = g.get("yahoo_displayed_gap_pct", 0)
         intra = g.get("intraday_gap_pct")
         pm_time = g.get("premarket_time")
         pm_vol = g.get("premarket_volume") or 0
         price = g.get("premarket_price") or g.get("intraday_price") or g.get("prev_close")
 
-        # Volumen formatieren
         if pm_vol > 1_000_000:
             vol_str = f"{pm_vol/1_000_000:.1f}M"
         elif pm_vol > 1000:
             vol_str = f"{pm_vol/1000:.0f}K"
         else:
-            vol_str = f"{pm_vol}"
+            vol_str = str(pm_vol) if pm_vol > 0 else ""
 
-        # Hauptzeile
+        new_marker = " 🆕" if (is_merge and not g.get("catalyst_source")) else ""
+
         if pm is not None:
             diff = pm - yh
             diff_str = f" (Yahoo: {yh:+.2f}%, Δ {diff:+.2f}pp)" if abs(diff) > 0.5 else ""
-            lines.append(f"<b>{g['rank']}. {sym}</b> ({isin})")
-            lines.append(f"   Premarket: <b>{pm:+.2f}%</b> ${price:.2f} @ {pm_time}{diff_str}")
-            lines.append(f"   PM-Volumen: {vol_str}")
+            lines.append(f"<b>{g['rank']}. {sym}</b>{name_part}{isin_part}{new_marker}")
+            vol_line = f"   PM-Vol: {vol_str}" if vol_str else ""
+            lines.append(f"   Premarket: <b>{pm:+.2f}%</b> ${price:.2f} @ {pm_time}{diff_str}{vol_line}")
         else:
-            lines.append(f"<b>{g['rank']}. {sym}</b> ({isin})")
-            lines.append(f"   Intraday: <b>{intra:+.2f}%</b> ${price:.2f}  (kein Premarket-Volumen)")
+            lines.append(f"<b>{g['rank']}. {sym}</b>{name_part}{isin_part}{new_marker}")
+            lines.append(f"   Intraday: <b>{intra:+.2f}%</b> ${price:.2f}")
 
-        # Katalysator
         cat = g.get("catalyst")
-        if cat:
+        benz = g.get("catalyst_benzinga")
+        if benz:
+            lines.append(f"   📰 <i>{benz[:75]}</i> <b>[Benzinga]</b>")
+        elif cat:
             lines.append(f"   📰 <i>{cat[:75]}</i>")
         lines.append("")
 else:
     lines.append("Keine Gappers nach Filter (Gap>5%, Preis>$3)")
 
-# Hinweis: TJL (Scanner B) läuft separat während der Handelszeit (tjl_scanner.sh),
-# nicht hier. Scanner A liefert nur die Premarket-Kandidaten.
-lines.append(f"\n<i>Premarket selbst berechnet (4:00-9:30 ET) | Universe: Yahoo Top 100</i>")
-lines.append(f"<i>TJL-Signale folgen ab 16:00 Berlin (Scanner B, bei Markteröffnung)</i>")
+if is_merge:
+    lines.append(f"\n<i>15:45-Ergänzung: Yahoo-Screener nach Marktöffnung aktualisiert</i>")
+else:
+    lines.append(f"\n<i>Premarket selbst berechnet (4:00-9:30 ET) | Universe: Yahoo Top 100</i>")
+    lines.append(f"<i>TJL-Signale folgen ab 16:00 Berlin (Scanner B, bei Markteröffnung)</i>")
 print("\n".join(lines))
 PYEOF
 )
 
-send_telegram "$MSG"
-echo "  Telegram gesendet!" | tee -a "$LOG"
+if [ -n "$MSG" ]; then
+    send_telegram "$MSG"
+    echo "  Telegram gesendet!" | tee -a "$LOG"
+else
+    echo "  Merge: keine neuen Gappers — kein Telegram." | tee -a "$LOG"
+fi
 echo "" | tee -a "$LOG"
-echo "=== Daily Scanner v2 fertig ===" | tee -a "$LOG"
+echo "=== Daily Scanner v3 fertig ===" | tee -a "$LOG"
