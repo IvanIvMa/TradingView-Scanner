@@ -24,9 +24,11 @@ cd "$(dirname "$0")"
 ulimit -n 4096 2>/dev/null || true
 
 MERGE=0
+FORCE=0
 while [ $# -gt 0 ]; do
     case "$1" in
         --merge) MERGE=1 ;;
+        --force) FORCE=1 ;;
     esac
     shift
 done
@@ -40,6 +42,36 @@ export $(grep -v '^#' .env | xargs)
 if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
     echo "FEHLER: TELEGRAM_BOT_TOKEN und TELEGRAM_CHAT_ID müssen in .env gesetzt sein" >&2
     exit 1
+fi
+
+# =============================================================================
+# DST-robustes ET-Gate
+# =============================================================================
+# launchd plant in Berlin-Zeit. Weil EU/US die Sommerzeit an verschiedenen
+# Tagen umschalten (8.-29. März, 25. Okt-1. Nov), driftet die Berlin->ET-
+# Umrechnung in diesen Wochen um +1h. Deshalb feuern die launchd-Jobs zu ZWEI
+# Berlin-Zeiten (Normal- + Gap-Woche); dieses Gate lässt nur den Lauf durch,
+# der wirklich die Ziel-ET-Zeit trifft. --force umgeht das (manuelle Läufe).
+#   Premarket-Lauf (kein --merge): Soll 9:00 ET  -> Fenster 8:30-9:29 ET
+#   Merge-Lauf     (--merge):      Soll 9:45 ET  -> Fenster 9:30-10:29 ET
+if [ "$FORCE" != "1" ]; then
+    GATE=$(MERGE=$MERGE python3 - << 'PYEOF'
+import os
+from datetime import datetime
+from zoneinfo import ZoneInfo
+now = datetime.now(ZoneInfo("America/New_York"))
+mins = now.hour * 60 + now.minute
+if os.environ.get("MERGE") == "1":
+    ok = (9*60+30) <= mins <= (10*60+29)
+else:
+    ok = (8*60+30) <= mins <= (9*60+29)
+print(f"{'OK' if ok else 'SKIP'}|{now.strftime('%H:%M')}")
+PYEOF
+)
+    if [ "${GATE%%|*}" = "SKIP" ]; then
+        echo "DST-Gate: ${GATE##*|} ET außerhalb Soll-Fenster — Lauf übersprungen (--force erzwingt)."
+        exit 0
+    fi
 fi
 
 DATE=$(date +%Y-%m-%d)
