@@ -17,6 +17,7 @@
 
 set -euo pipefail
 cd "$(dirname "$0")"
+ulimit -n 4096 2>/dev/null || true
 
 if [ ! -f .env ]; then
     echo "FEHLER: .env Datei nicht gefunden" >&2
@@ -102,10 +103,22 @@ for q in yahoo_quotes:
 
 print(f"  {len(tickers)} Aktien-Ticker (ohne FX/Krypto/Indices)")
 
-# --- 1b. Batch-Download 1-Min-Bars MIT Premarket ---
+# --- 1b. Batch-Download 1-Min-Bars MIT Premarket (in Chunks) ---
+import pandas as pd
+CHUNK = 25
 print(f"  Lade 1-Min-Bars mit Premarket-Daten (~30 Sek)...")
-data = yf.download(tickers, period="2d", interval="1m", prepost=True,
-                   progress=False, group_by="ticker", threads=True, auto_adjust=False)
+chunks = [tickers[i:i+CHUNK] for i in range(0, len(tickers), CHUNK)]
+frames = {}
+for chunk in chunks:
+    d = yf.download(chunk, period="2d", interval="1m", prepost=True,
+                    progress=False, group_by="ticker", threads=True, auto_adjust=False)
+    if len(chunk) == 1:
+        frames[chunk[0]] = d
+    else:
+        for sym in chunk:
+            if sym in d.columns.get_level_values(0):
+                frames[sym] = d[sym]
+data = frames
 
 # --- 1c. Eigene Premarket-Berechnung ---
 today_et = datetime.now(ET).date()
@@ -140,7 +153,10 @@ if new_isins:
 results = []
 for sym in tickers:
     try:
-        df = data[sym].dropna() if len(tickers) > 1 else data.dropna()
+        df = data.get(sym)
+        if df is None:
+            continue
+        df = df.dropna()
         if df.empty:
             continue
         df.index = df.index.tz_convert(ET)
