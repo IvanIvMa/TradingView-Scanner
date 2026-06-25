@@ -220,6 +220,31 @@ with open(state_file, "w") as f:
 # --- Entscheidung: Telegram senden? ---
 send = first_run or bool(new_passes)
 
+# --- Markt-Regime als HINWEIS (Step 10) — filtert NICHT, nur Empfehlung ---
+# SPY & QQQ vs. SMA200: gibt dem Trader Kontext, blockiert aber keinen Einstieg.
+def market_regime_line():
+    parts = {}
+    for idx in ("SPY", "QQQ"):
+        try:
+            c = yf.Ticker(idx).history(period="1y", interval="1d")["Close"].dropna().tolist()
+            parts[idx] = (c[-1] > sum(c[-200:]) / 200) if len(c) >= 200 else None
+        except Exception:
+            parts[idx] = None
+    spy, qqq = parts.get("SPY"), parts.get("QQQ")
+    if spy is None and qqq is None:
+        return ""
+    if spy and qqq:
+        tag = "🟢 Rückenwind — SPY &amp; QQQ über SMA200"
+    elif spy is False and qqq is False:
+        tag = "🔴 Gegenwind — SPY &amp; QQQ unter SMA200 (Vorsicht bei Longs)"
+    else:
+        s = "über" if spy else ("unter" if spy is False else "?")
+        q = "über" if qqq else ("unter" if qqq is False else "?")
+        tag = f"🟡 Gemischt — SPY {s}, QQQ {q} SMA200"
+    return f"📈 Markt-Regime: {tag}"
+
+regime_line = market_regime_line() if send else ""
+
 decision = {
     "status": "ok",
     "time_et": now_et.strftime("%H:%M ET"),
@@ -230,6 +255,7 @@ decision = {
     "new_passes": sorted(new_passes),
     "first_run": first_run,
     "send": send,
+    "regime_line": regime_line,
     "outfile": fname,
 }
 print(json.dumps(decision))
@@ -264,6 +290,8 @@ import json, sys
 d = json.load(sys.stdin)
 lines = [f\"🎯 <b>TJL Scanner — {d['time_et']}</b>\"]
 lines.append(f\"<i>{d['universe_note']}</i>\")
+if d.get('regime_line'):
+    lines.append(d['regime_line'])
 lines.append('')
 hits = d['hits']
 if hits:
