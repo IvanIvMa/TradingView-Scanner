@@ -1,0 +1,64 @@
+<svg viewBox="0 0 770 430" xmlns="http://www.w3.org/2000/svg" font-family="ui-sans-serif, system-ui, sans-serif" role="img">
+<title>Scanner pipeline: Scanner A, Scanner B, Position Tracker, all driven by launchd, signals via Telegram</title>
+<desc>launchd drives Scanner A (yfinance), Scanner B (TradingView MCP) and the Position Tracker; all signals are delivered via Telegram.</desc>
+<style>
+  .box{fill:#f4f4f5;stroke:#d4d4d8;stroke-width:1.5}
+  .t{fill:#18181b;font-weight:700;font-size:15px}
+  .s{fill:#71717a;font-size:11.5px}
+  .chip{fill:#e0edff;stroke:#3b82f6;stroke-width:1.2}
+  .ct{fill:#2563eb;font-weight:600;font-size:11.5px}
+  .time{fill:#71717a;font-size:10.5px;font-weight:600}
+  .flow{stroke:#a1a1aa;stroke-width:1.6;fill:none}
+  .lbl{fill:#71717a;font-size:10px}
+  .banner{fill:#2563eb}
+  .bt{fill:#fff;font-size:11.5px;font-weight:600}
+</style>
+<defs>
+  <marker id="a" markerWidth="8" markerHeight="8" refX="6" refY="3" orient="auto"><path d="M0,0 L6,3 L0,6 Z" fill="#a1a1aa"/></marker>
+</defs>
+
+<rect class="banner" x="20" y="16" width="510" height="30" rx="8"/>
+<text class="bt" x="36" y="35">⚙ launchd · OS scheduler · persistent · no Claude · no 7-day expiry</text>
+
+<rect class="box" x="20" y="70" width="300" height="66" rx="10"/>
+<text class="t" x="36" y="95">Scanner A</text>
+<text class="s" x="36" y="113">Yahoo Top-100 → yfinance</text>
+<text class="s" x="36" y="128">premarket + merge</text>
+<text class="time" x="312" y="95" text-anchor="end">9:00 + 9:45 ET</text>
+
+<rect class="box" x="20" y="186" width="300" height="66" rx="10"/>
+<text class="t" x="36" y="211">Scanner B</text>
+<text class="s" x="36" y="229">mcp_scanner_b.py → TradingView MCP</text>
+<text class="s" x="36" y="244">TJL check (PMH/HOD/SMA200)</text>
+<text class="time" x="312" y="211" text-anchor="end">every 30 min · 10–15:30 ET</text>
+
+<rect class="box" x="20" y="302" width="300" height="66" rx="10"/>
+<text class="t" x="36" y="327">Position Tracker</text>
+<text class="s" x="36" y="345">yfinance · ATR / Trailing / EOD</text>
+<text class="s" x="36" y="360">opens on PASS, monitors</text>
+<text class="time" x="312" y="327" text-anchor="end">every 5 min · 10–16 ET</text>
+
+<path class="flow" d="M170,136 L170,186" marker-end="url(#a)"/>
+<text class="lbl" x="178" y="166">10 gappers</text>
+<path class="flow" d="M170,252 L170,302" marker-end="url(#a)"/>
+<text class="lbl" x="178" y="282">PASS opens position</text>
+
+<rect class="chip" x="360" y="86" width="150" height="34" rx="7"/>
+<text class="ct" x="370" y="107">📋 Gapper list</text>
+<rect class="chip" x="360" y="202" width="150" height="34" rx="7"/>
+<text class="ct" x="370" y="223">✅ Entry (PASS)</text>
+<rect class="chip" x="360" y="318" width="150" height="34" rx="7"/>
+<text class="ct" x="370" y="339">🚪 Exit</text>
+
+<path class="flow" d="M320,103 L360,103" marker-end="url(#a)"/>
+<path class="flow" d="M320,219 L360,219" marker-end="url(#a)"/>
+<path class="flow" d="M320,335 L360,335" marker-end="url(#a)"/>
+
+<rect class="box" x="600" y="150" width="150" height="138" rx="12"/>
+<text x="675" y="200" text-anchor="middle" font-size="34">📱</text>
+<text class="t" x="675" y="232" text-anchor="middle">Telegram</text>
+<text class="s" x="675" y="250" text-anchor="middle">your signals</text>
+<path class="flow" d="M510,103 C560,103 575,200 600,205" marker-end="url(#a)"/>
+<path class="flow" d="M510,219 L600,219" marker-end="url(#a)"/>
+<path class="flow" d="M510,335 C560,335 575,245 600,238" marker-end="url(#a)"/>
+</svg>

@@ -2,6 +2,8 @@
 
 Automated US stock day-trading scanner with Telegram alerts. Finds premarket gappers, checks technical entry signals (TJL strategy), and monitors exits — all delivered to your phone.
 
+![Pipeline overview](docs/pipeline.svg)
+
 ## What it does
 
 1. **Scanner A** (`daily_scanner.sh`) — Scans 5,700+ US stocks for premarket gaps (>5%, >$3, >50K volume), fetches news catalysts
