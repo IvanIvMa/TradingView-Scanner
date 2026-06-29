@@ -119,13 +119,13 @@ function renderGappers(g) {
     return;
   }
   tbody.innerHTML = g.gappers.map(function(gp) {
-    var gapVal = gp.premarket_gap_pct || gp.intraday_gap_pct || gp.gap_pct;
-    var gap = gapVal ? '+' + gapVal.toFixed(1) + '%' : '--';
-    var vol = gp.premarket_volume || gp.volume;
-    vol = vol ? formatNumber(vol) : '--';
+    var gapVal = gp.premarket_gap_pct != null ? gp.premarket_gap_pct : gp.intraday_gap_pct;
+    var gap = gapVal != null ? '+' + gapVal.toFixed(1) + '%' : '--';
+    var vol = gp.premarket_volume != null ? gp.premarket_volume : gp.volume;
+    vol = vol != null ? formatNumber(vol) : '--';
     var fl = gp.float_shares ? formatNumber(gp.float_shares) : '--';
-    var priceVal = gp.premarket_price || gp.intraday_price || gp.price;
-    var price = priceVal ? '$' + priceVal.toFixed(2) : '--';
+    var priceVal = gp.premarket_price != null ? gp.premarket_price : (gp.intraday_price != null ? gp.intraday_price : gp.price);
+    var price = priceVal != null ? '$' + priceVal.toFixed(2) : '--';
     return '<tr>' +
       '<td class="text-left" style="font-weight:600;color:var(--blue)">' + gp.symbol + '</td>' +
       '<td class="text-right mono">' + price + '</td>' +
