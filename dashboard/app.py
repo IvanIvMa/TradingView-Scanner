@@ -88,9 +88,10 @@ async def api_signals():
     data = load_json(files[0])
     if not data:
         return {"date": today, "passes": [], "fails": [], "scan_time": None}
-    passes = [h for h in data.get("hits", []) if h.get("result") == "PASS"]
-    fails = [h for h in data.get("hits", []) if h.get("result") != "PASS"]
-    scan_time = data.get("scan_time") or os.path.basename(files[0]).replace(f"tjl_watchlist_{today}_", "").replace(".json", "")
+    passes = data.get("hits", [])
+    all_results = data.get("all_results", [])
+    fails = [r for r in all_results if r.get("result") not in ("PASS", None)]
+    scan_time = data.get("scan_time_et") or data.get("scan_time") or os.path.basename(files[0]).replace(f"tjl_watchlist_{today}_", "").replace(".json", "")
     return {"date": today, "passes": passes, "fails": fails, "scan_time": scan_time}
 
 
