@@ -164,7 +164,7 @@ def send_telegram(msg):
     token = ENV.get("TELEGRAM_BOT_TOKEN")
     chat  = ENV.get("TELEGRAM_CHAT_ID")
     if not token or not chat:
-        print("  ! Telegram-Credentials fehlen", file=sys.stderr)
+        print("  ! Telegram credentials missing", file=sys.stderr)
         return
     payload = json.dumps({"chat_id": int(chat), "text": msg, "parse_mode": "HTML"})
     subprocess.run(
@@ -287,7 +287,7 @@ def main():
     market_close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
     in_window = market_open <= now_et <= market_close
     if not in_window and not force:
-        print(f"  Außerhalb Überwachungsfenster ({now_et.strftime('%H:%M ET')}) — kein Lauf.")
+        print(f"  Outside monitoring window ({now_et.strftime('%H:%M ET')}) — skipping.")
         return
 
     is_eod = (now_et.hour, now_et.minute) >= (EOD_HOUR_ET, EOD_MIN_ET)
@@ -295,9 +295,9 @@ def main():
     # TradingView MCP verbinden (Fallback: Yahoo Finance)
     mcp = try_connect_mcp()
     if mcp:
-        print("  📡 Datenquelle: TradingView (MCP live)")
+        print("  Data source: TradingView (MCP live)")
     else:
-        print("  📡 Datenquelle: Yahoo Finance (Fallback)")
+        print("  Data source: Yahoo Finance (fallback)")
 
     # Zustand laden
     positions = {}
@@ -331,10 +331,10 @@ def main():
         target = round(price + atr, 2)
         init_stop = round(price * (1 - TRAIL_PCT / 100), 2)
         alerts.append(
-            f"👁 <b>{sym} — Beobachtung gestartet</b>\n"
-            f"   Einstieg ${price}  |  ATR ${atr}\n"
-            f"   Teilgewinn-Ziel: ${target} (+1 ATR)\n"
-            f"   Start Trailing Stop: ${init_stop} (-{TRAIL_PCT}%)"
+            f"👁 <b>{sym} — Tracking started</b>\n"
+            f"   Entry ${price}  |  ATR ${atr}\n"
+            f"   Partial profit target: ${target} (+1 ATR)\n"
+            f"   Initial trailing stop: ${init_stop} (-{TRAIL_PCT}%)"
         )
 
     # --- 2. Offene Positionen überwachen ---
@@ -358,9 +358,9 @@ def main():
             if not pos["partial_alerted"] and running_high >= partial_price:
                 pos["partial_alerted"] = True
                 alerts.append(
-                    f"🟡 <b>{sym} — Teilgewinn-Ziel erreicht</b> @ ${round(partial_price,2)}\n"
-                    f"   Strategie: {PARTIAL_PCT}% verkaufen, Stop auf Einstieg ${entry} nachziehen\n"
-                    f"   <i>(+1 ATR seit Einstieg)</i>"
+                    f"🟡 <b>{sym} — Partial profit target hit</b> @ ${round(partial_price,2)}\n"
+                    f"   Strategy: sell {PARTIAL_PCT}%, move stop to entry ${entry}\n"
+                    f"   <i>(+1 ATR from entry)</i>"
                 )
 
             # Trailing Stop: nach Teilgewinn Boden = Einstieg (Breakeven)
@@ -383,9 +383,9 @@ def main():
             pos["exit_reason"] = "trailing_stop"
             pos["exit_ts"] = t
             alerts.append(
-                f"🔴 <b>{sym} — Trailing Stop ausgelöst</b> @ ${stop_px} ({fmt_et(t)})\n"
-                f"   Strategie: Restposition schließen\n"
-                f"   Ergebnis ab Einstieg: <b>{sign}{pnl_pct}%</b> (Hoch war ${pos['high_water']})"
+                f"🔴 <b>{sym} — Trailing stop triggered</b> @ ${stop_px} ({fmt_et(t)})\n"
+                f"   Strategy: close remaining position\n"
+                f"   P&L from entry: <b>{sign}{pnl_pct}%</b> (high was ${pos['high_water']})"
             )
             continue
 
@@ -399,9 +399,9 @@ def main():
             pos["exit_reason"] = "eod"
             pos["exit_ts"] = now_et.timestamp()
             alerts.append(
-                f"🟠 <b>{sym} — Börsenschluss naht</b>\n"
-                f"   Strategie: Position schließen (kein Overnight)\n"
-                f"   Aktueller Kurs ${round(curr,2)}  |  ab Einstieg: <b>{sign}{pnl_pct}%</b>"
+                f"🟠 <b>{sym} — Market close approaching</b>\n"
+                f"   Strategy: close position (no overnight hold)\n"
+                f"   Current price ${round(curr,2)}  |  P&L from entry: <b>{sign}{pnl_pct}%</b>"
             )
 
     # MCP-Verbindung schließen
@@ -414,7 +414,7 @@ def main():
 
     # Alerts senden
     open_count = sum(1 for p in positions.values() if p["status"] == "open")
-    print(f"  Positionen: {len(positions)} gesamt, {open_count} offen, {len(alerts)} Alert(s)")
+    print(f"  Positions: {len(positions)} total, {open_count} open, {len(alerts)} alert(s)")
     for a in alerts:
         print("  ---")
         print("  " + a.replace("\n", "\n  "))

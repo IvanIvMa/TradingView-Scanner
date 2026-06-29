@@ -14,7 +14,7 @@ if [ -f .env ]; then
 fi
 
 if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
-    echo "FEHLER: TELEGRAM_BOT_TOKEN und TELEGRAM_CHAT_ID müssen in .env gesetzt sein"
+    echo "ERROR: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set in .env"
     exit 1
 fi
 
@@ -47,10 +47,10 @@ with open(sys.argv[1]) as f:
 
 gappers = data.get("gappers", [])
 if not gappers:
-    print("📊 <b>Premarket Gappers</b> — Keine Gappers gefunden (Markt geschlossen?)")
+    print("📊 <b>Premarket Gappers</b> — No gappers found (market closed?)")
     sys.exit()
 
-lines = [f"📊 <b>Premarket Gappers ({len(gappers)} Treffer)</b>\n"]
+lines = [f"📊 <b>Premarket Gappers ({len(gappers)} found)</b>\n"]
 for g in gappers[:10]:
     catalyst = g.get("catalyst", "")
     cat_str = f"\n   📰 {catalyst[:50]}" if catalyst else ""
@@ -63,14 +63,14 @@ print("\n".join(lines))
 PYEOF
         )
         send_telegram "$MSG"
-        echo "Telegram-Nachricht gesendet."
+        echo "Telegram message sent."
         ;;
 
     tjl)
         echo "=== Scanner B: TJL Watchlist ==="
         LATEST=$(ls -t tjl_watchlist_*.json 2>/dev/null | head -1)
         if [ -z "$LATEST" ]; then
-            echo "Keine TJL-Ergebnisse gefunden. Erst 'scanner.py tjl' oder den MCP-Scanner laufen lassen."
+            echo "No TJL results found. Run 'scanner.py tjl' or the MCP scanner first."
             exit 1
         fi
 
@@ -92,7 +92,7 @@ if hits:
             f"PMH: ${h.get('pmh', 'N/A')}  HOD: ${h.get('today_hod', 'N/A')}"
         )
 else:
-    lines = [f"🔍 <b>TJL Scanner ({checked} geprüft, 0 PASS)</b>\n"]
+    lines = [f"🔍 <b>TJL Scanner ({checked} checked, 0 PASS)</b>\n"]
     for r in all_res:
         lines.append(f"  {r['symbol']}: {r['result']}")
 
@@ -103,15 +103,15 @@ print("\n".join(lines))
 PYEOF
         )
         send_telegram "$MSG"
-        echo "Telegram-Nachricht gesendet."
+        echo "Telegram message sent."
         ;;
 
     test)
-        send_telegram "✅ TradingView Scanner — Telegram Alert funktioniert! ($(date '+%Y-%m-%d %H:%M'))"
-        echo "Testnachricht gesendet."
+        send_telegram "✅ TradingView Scanner — Telegram alert working! ($(date '+%Y-%m-%d %H:%M'))"
+        echo "Test message sent."
         ;;
 
     *)
-        echo "Nutzung: bash telegram_alert.sh [gappers|tjl|test]"
+        echo "Usage: bash telegram_alert.sh [gappers|tjl|test]"
         ;;
 esac

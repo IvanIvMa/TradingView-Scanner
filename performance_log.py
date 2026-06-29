@@ -147,15 +147,15 @@ def build_caption(stats, open_count):
     b, w = stats["best"], stats["worst"]
     sign = "+" if stats["cum_pct"] >= 0 else ""
     return (
-        f"📊 <b>TJL Performance-Log</b>\n"
-        f"<i>{stats['first'].strftime('%d.%m.')}–{stats['last'].strftime('%d.%m.%Y')} · echte Signale</i>\n\n"
-        f"Trades: <b>{stats['n']}</b>  ({stats['wins']} Gewinner)\n"
-        f"Win-Rate: <b>{stats['win_rate']}%</b>\n"
-        f"Ø pro Trade: <b>{'+' if stats['avg']>=0 else ''}{stats['avg']}%</b>\n"
-        f"Kumuliert (kompoundiert): <b>{sign}{stats['cum_pct']}%</b>\n\n"
-        f"🟢 Bester: {b['symbol']} +{b['ret']}%\n"
-        f"🔴 Schlechtester: {w['symbol']} {w['ret']}%\n"
-        f"👁 Aktuell offen: {open_count}"
+        f"📊 <b>TJL Performance Log</b>\n"
+        f"<i>{stats['first'].strftime('%m/%d')}–{stats['last'].strftime('%m/%d/%Y')} · live signals</i>\n\n"
+        f"Trades: <b>{stats['n']}</b>  ({stats['wins']} winners)\n"
+        f"Win rate: <b>{stats['win_rate']}%</b>\n"
+        f"Avg per trade: <b>{'+' if stats['avg']>=0 else ''}{stats['avg']}%</b>\n"
+        f"Cumulative (compounded): <b>{sign}{stats['cum_pct']}%</b>\n\n"
+        f"🟢 Best: {b['symbol']} +{b['ret']}%\n"
+        f"🔴 Worst: {w['symbol']} {w['ret']}%\n"
+        f"👁 Currently open: {open_count}"
     )
 
 
@@ -187,11 +187,11 @@ def main():
     stats = compute_stats(trades)
 
     if stats is None:
-        msg = (f"📊 <b>TJL Performance-Log</b>\n"
-               f"<i>Noch keine abgeschlossenen Trades.</i>\n"
-               f"👁 Aktuell offen: {open_count}\n\n"
-               f"Sobald Scanner B PASS-Signale liefert und der Tracker sie schließt, "
-               f"erscheint hier die Equity-Kurve.")
+        msg = (f"📊 <b>TJL Performance Log</b>\n"
+               f"<i>No closed trades yet.</i>\n"
+               f"👁 Currently open: {open_count}\n\n"
+               f"Once Scanner B produces PASS signals and the tracker closes them, "
+               f"the equity curve will appear here.")
         print(msg.replace("<b>","").replace("</b>","").replace("<i>","").replace("</i>",""))
         if not DRY:
             send_text(env, msg)
@@ -205,7 +205,7 @@ def main():
     print(f"\nPNG: {png}")
     if not DRY:
         ok = send_photo(env, png, caption)
-        print("✅ Telegram gesendet." if ok else "❌ Telegram-Fehler.")
+        print("Telegram sent." if ok else "Telegram error.")
 
 
 if __name__ == "__main__":
