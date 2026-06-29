@@ -57,11 +57,11 @@ function renderStatus(s) {
   var label = document.getElementById('market-status');
   if (s.market_open) {
     dot.className = 'dot dot-green';
-    label.textContent = 'Markt offen';
+    label.textContent = 'Market open';
     label.style.color = 'var(--green)';
   } else {
     dot.className = 'dot dot-gray';
-    label.textContent = 'Markt geschlossen';
+    label.textContent = 'Market closed';
     label.style.color = 'var(--text-3)';
   }
 }
@@ -86,25 +86,25 @@ function renderRegime(r) {
 
   if (r.regime === 'tailwind') {
     icon.textContent = '🟢';
-    label.textContent = 'Rückenwind';
+    label.textContent = 'Tailwind';
     label.style.color = 'var(--green)';
-    card.className = 'card card-wide glow-green';
-    badge.innerHTML = '<span class="dot dot-green"></span><span style="color:var(--green)">Rückenwind</span>';
+    card.className = 'card glow-green';
+    badge.innerHTML = '<span class="dot dot-green"></span><span style="color:var(--green)">Tailwind</span>';
   } else if (r.regime === 'mixed') {
     icon.textContent = '🟡';
-    label.textContent = 'Gemischt';
+    label.textContent = 'Mixed';
     label.style.color = 'var(--yellow)';
-    card.className = 'card card-wide';
-    badge.innerHTML = '<span class="dot dot-yellow"></span><span style="color:var(--yellow)">Gemischt</span>';
+    card.className = 'card';
+    badge.innerHTML = '<span class="dot dot-yellow"></span><span style="color:var(--yellow)">Mixed</span>';
   } else if (r.regime === 'headwind') {
     icon.textContent = '🔴';
-    label.textContent = 'Gegenwind';
+    label.textContent = 'Headwind';
     label.style.color = 'var(--red)';
-    card.className = 'card card-wide glow-red';
-    badge.innerHTML = '<span class="dot dot-red"></span><span style="color:var(--red)">Gegenwind</span>';
+    card.className = 'card glow-red';
+    badge.innerHTML = '<span class="dot dot-red"></span><span style="color:var(--red)">Headwind</span>';
   } else {
     icon.textContent = '➖';
-    label.textContent = 'Unbekannt';
+    label.textContent = 'Unknown';
     label.style.color = 'var(--text-3)';
   }
 }
@@ -115,14 +115,17 @@ function renderGappers(g) {
   document.getElementById('stat-gappers-sub').textContent = g.date;
   var tbody = document.getElementById('gappers-tbody');
   if (!g.gappers.length) {
-    tbody.innerHTML = '<tr><td colspan="6" style="padding:32px;text-align:center;color:var(--text-3)">Keine Gappers heute</td></tr>';
+    tbody.innerHTML = '<tr><td colspan="6" style="padding:32px;text-align:center;color:var(--text-3)">No gappers today</td></tr>';
     return;
   }
   tbody.innerHTML = g.gappers.map(function(gp) {
-    var gap = gp.gap_pct ? '+' + gp.gap_pct.toFixed(1) + '%' : '--';
-    var vol = gp.volume ? formatNumber(gp.volume) : '--';
+    var gapVal = gp.premarket_gap_pct || gp.intraday_gap_pct || gp.gap_pct;
+    var gap = gapVal ? '+' + gapVal.toFixed(1) + '%' : '--';
+    var vol = gp.premarket_volume || gp.volume;
+    vol = vol ? formatNumber(vol) : '--';
     var fl = gp.float_shares ? formatNumber(gp.float_shares) : '--';
-    var price = gp.price ? '$' + gp.price.toFixed(2) : '--';
+    var priceVal = gp.premarket_price || gp.intraday_price || gp.price;
+    var price = priceVal ? '$' + priceVal.toFixed(2) : '--';
     return '<tr>' +
       '<td class="text-left" style="font-weight:600;color:var(--blue)">' + gp.symbol + '</td>' +
       '<td class="text-right mono">' + price + '</td>' +
@@ -140,7 +143,7 @@ function renderSignals(s) {
   document.getElementById('stat-passes-sub').textContent = s.scan_time ? 'Scan: ' + s.scan_time : '--';
   var container = document.getElementById('signals-container');
   if (!s.passes.length && !s.fails.length) {
-    container.innerHTML = '<div class="card card-empty">Noch keine Signale heute</div>';
+    container.innerHTML = '<div class="card card-empty">No signals today</div>';
     return;
   }
   var html = '';
@@ -152,25 +155,26 @@ function renderSignals(s) {
 function signalCard(p, isPass) {
   var icon = isPass ? '✅' : '❌';
   var badgeClass = isPass ? 'badge-green' : 'badge-red';
-  var badgeText = isPass ? 'PASS' : 'FAIL';
+  var badgeText = isPass ? 'PASS' : p.result || 'FAIL';
   var glowClass = isPass ? ' glow-green' : '';
-  var price = p.curr_price ? '$' + p.curr_price.toFixed(2) : '--';
-  var details = price;
-  if (p.prev_daily_high) details += ' | Vortag-Hoch $' + p.prev_daily_high.toFixed(2);
-  if (p.sma200) details += ' | SMA200 $' + p.sma200.toFixed(2);
+  var details = '';
+  if (p.curr_price) {
+    details = '$' + p.curr_price.toFixed(2);
+    if (p.prev_daily_high) details += ' | Prev high $' + p.prev_daily_high.toFixed(2);
+    if (p.sma200) details += ' | SMA200 $' + p.sma200.toFixed(2);
+  }
 
   return '<div class="card' + glowClass + '">' +
     '<div class="signal-card">' +
       '<div class="signal-left">' +
         '<span class="signal-icon">' + icon + '</span>' +
         '<div>' +
-          '<div class="signal-sym">' + p.symbol + '<span class="badge ' + badgeClass + '">' + badgeText + '</span></div>' +
-          '<div class="signal-detail">' + details + '</div>' +
+          '<div class="signal-sym">' + p.symbol + ' <span class="badge ' + badgeClass + '">' + badgeText + '</span></div>' +
+          (details ? '<div class="signal-detail">' + details + '</div>' : '') +
         '</div>' +
       '</div>' +
       '<button class="btn-sm" onclick="loadChartForSymbol(\'' + p.symbol + '\')">Chart</button>' +
     '</div>' +
-    (p.fail_reason ? '<div class="signal-reason">' + p.fail_reason + '</div>' : '') +
   '</div>';
 }
 
@@ -182,8 +186,8 @@ function renderPositions(data) {
   if (!data.positions.length) {
     grid.innerHTML = '<div class="card card-empty" style="grid-column:span 2">' +
       '<div class="empty-icon">💭</div>' +
-      '<div>Keine Positionen heute</div>' +
-      '<div style="font-size:12px;margin-top:4px;color:var(--text-3)">PASS-Signale werden automatisch beobachtet</div>' +
+      '<div>No positions today</div>' +
+      '<div style="font-size:12px;margin-top:4px;color:var(--text-3)">PASS signals are tracked automatically</div>' +
     '</div>';
     return;
   }
@@ -200,10 +204,10 @@ function renderPositions(data) {
     var progressPct = Math.min(((current - entry) / pos.atr) * 100, 100);
     var progressClass = progressPct >= 100 ? 'progress-fill-green' : 'progress-fill-blue';
 
-    var statusBadge = isOpen ? '<span class="badge badge-blue">OFFEN</span>'
+    var statusBadge = isOpen ? '<span class="badge badge-blue">OPEN</span>'
       : pos.exit_reason === 'trailing_stop' ? '<span class="badge badge-red">TRAILING STOP</span>'
       : '<span class="badge badge-yellow">EOD EXIT</span>';
-    var partialBadge = pos.partial_alerted ? '<span class="badge badge-green">TEILGEWINN</span>' : '';
+    var partialBadge = pos.partial_alerted ? '<span class="badge badge-green">PARTIAL</span>' : '';
 
     var html = '<div class="card' + (isOpen ? ' glow-blue' : '') + '">' +
       '<div class="pos-header">' +
@@ -211,8 +215,8 @@ function renderPositions(data) {
         '<span class="pos-pnl ' + pnlColor + '">' + pnlSign + pnl + '%</span>' +
       '</div>' +
       '<div class="pos-stats">' +
-        '<div><div class="pos-stat-label">Einstieg</div><div class="pos-stat-value mono">$' + entry.toFixed(2) + '</div></div>' +
-        '<div><div class="pos-stat-label">' + (isOpen ? 'Hoch' : 'Exit') + '</div><div class="pos-stat-value mono">$' + current.toFixed(2) + '</div></div>' +
+        '<div><div class="pos-stat-label">Entry</div><div class="pos-stat-value mono">$' + entry.toFixed(2) + '</div></div>' +
+        '<div><div class="pos-stat-label">' + (isOpen ? 'High' : 'Exit') + '</div><div class="pos-stat-value mono">$' + current.toFixed(2) + '</div></div>' +
         '<div><div class="pos-stat-label">ATR</div><div class="pos-stat-value mono">$' + pos.atr.toFixed(2) + '</div></div>' +
       '</div>';
 
@@ -220,7 +224,7 @@ function renderPositions(data) {
       html += '<div class="progress-bar"><div class="progress-fill ' + progressClass + '" style="width:' + Math.max(0, Math.min(progressPct, 100)) + '%"></div></div>' +
         '<div class="progress-labels">' +
           '<span class="color-red">Stop $' + trailStop + '</span>' +
-          '<span class="color-muted">Ziel $' + target + '</span>' +
+          '<span class="color-muted">Target $' + target + '</span>' +
         '</div>';
     } else {
       html += '<div style="margin-top:12px;font-size:12px;color:var(--text-3)">' +
@@ -230,7 +234,7 @@ function renderPositions(data) {
     }
 
     html += '<div style="margin-top:12px;text-align:right">' +
-      '<button class="btn-sm" onclick="loadChartForSymbol(\'' + pos.symbol + '\')">Chart anzeigen</button></div></div>';
+      '<button class="btn-sm" onclick="loadChartForSymbol(\'' + pos.symbol + '\')">View chart</button></div></div>';
     return html;
   }).join('');
 }
@@ -239,7 +243,7 @@ function renderPositions(data) {
 function renderHistory(data) {
   var container = document.getElementById('history-container');
   if (!data.days.length) {
-    container.innerHTML = '<div class="card card-empty">Keine History vorhanden</div>';
+    container.innerHTML = '<div class="card card-empty">No history available</div>';
     return;
   }
   container.innerHTML = data.days.map(function(day) {
