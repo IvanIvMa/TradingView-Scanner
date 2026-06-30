@@ -20,13 +20,23 @@ Usage:
   python3 daily_scanner.py --force      # bypass DST time gate
 """
 
-import sys, os, json, time, select, subprocess, shutil, urllib.request, urllib.parse
+import sys, os, json, time, select, subprocess, shutil, ssl, urllib.request, urllib.parse
 from datetime import datetime
 from zoneinfo import ZoneInfo
 from xml.etree import ElementTree
 
 import yfinance as yf
 import pandas as pd
+
+# macOS Python doesn't use the system keychain for SSL — point it at certifi's
+# CA bundle so urllib calls (Yahoo Screener, Telegram, Google News) verify like
+# curl did in the old bash version. Falls back to the default context if certifi
+# is unavailable.
+try:
+    import certifi
+    SSL_CTX = ssl.create_default_context(cafile=certifi.where())
+except Exception:
+    SSL_CTX = ssl.create_default_context()
 
 ET = ZoneInfo("America/New_York")
 BERLIN = ZoneInfo("Europe/Berlin")
@@ -174,7 +184,7 @@ def load_env():
 
 def send_telegram(env, msg):
     if not msg:
-        return
+        return False
     payload = json.dumps({
         "chat_id": int(env["TELEGRAM_CHAT_ID"]),
         "text": msg,
@@ -185,15 +195,17 @@ def send_telegram(env, msg):
         data=payload,
         headers={"Content-Type": "application/json"})
     try:
-        urllib.request.urlopen(req, timeout=10)
+        urllib.request.urlopen(req, timeout=10, context=SSL_CTX)
+        return True
     except Exception as e:
         log(f"Telegram send failed: {e}")
+        return False
 
 
 def fetch_catalyst(symbol):
     url = f"https://news.google.com/rss/search?q={urllib.parse.quote(symbol)}+stock&hl=en-US&gl=US&ceid=US:en"
     try:
-        data = urllib.request.urlopen(url, timeout=10).read()
+        data = urllib.request.urlopen(url, timeout=10, context=SSL_CTX).read()
         root = ElementTree.fromstring(data)
         for item in root.iter("item"):
             title = item.findtext("title", "")
@@ -208,7 +220,7 @@ def fetch_yahoo_screener():
     url = "https://query1.finance.yahoo.com/v1/finance/screener/predefined/saved?scrIds=day_gainers&count=100"
     req = urllib.request.Request(url, headers={"User-Agent": "Mozilla/5.0"})
     try:
-        data = urllib.request.urlopen(req, timeout=15).read()
+        data = urllib.request.urlopen(req, timeout=15, context=SSL_CTX).read()
         return json.loads(data)
     except Exception as e:
         log(f"Yahoo Screener fetch failed: {e}")
@@ -589,8 +601,8 @@ def main():
     log("--- Step 6: Telegram report ---")
     msg = build_telegram_message(result_obj, merge, existing_symbols)
     if msg:
-        send_telegram(env, msg)
-        log("Telegram sent!")
+        if send_telegram(env, msg):
+            log("Telegram sent!")
     else:
         log("Merge: no new gappers — no Telegram.")
 
