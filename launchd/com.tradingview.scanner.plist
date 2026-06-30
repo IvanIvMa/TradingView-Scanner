@@ -6,8 +6,9 @@
     <string>com.tradingview.scanner</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/ivan/TradingViewScanner/daily_scanner.sh</string>
+        <string>/usr/bin/env</string>
+        <string>python3</string>
+        <string>/Users/ivan/TradingViewScanner/daily_scanner.py</string>
     </array>
     <!-- Feuert zu ZWEI Berlin-Zeiten (Normal- + DST-Gap-Woche); ET-Gate im Script
          laesst nur den Lauf zur Ziel-ET-Zeit durch. -->
