@@ -156,6 +156,21 @@ def parse_de_number(s):
         return None
 
 
+def _bar_num(v):
+    """Parse an OHLCV value from MCP. TradingView returns real numbers, but be
+    robust to US ('12.50') and German ('12,50') string formats too. Critically,
+    do NOT run plain numbers/US-decimals through parse_de_number — that strips
+    the decimal point and turns 12.5 into 125."""
+    if v is None:
+        return None
+    if isinstance(v, (int, float)):
+        return float(v)
+    try:
+        return float(v)          # numeric or US-format string "12.50"
+    except (ValueError, TypeError):
+        return parse_de_number(v)  # German-format string "12,50"
+
+
 # =============================================================================
 # Helpers
 # =============================================================================
@@ -264,15 +279,15 @@ def fetch_data_mcp(mcp, tickers, today_et):
                 t = b.get("t") or b.get("time")
                 if t is None:
                     continue
-                o = parse_de_number(b.get("open")) or b.get("open")
-                h = parse_de_number(b.get("high")) or b.get("high")
-                lo = parse_de_number(b.get("low")) or b.get("low")
-                c = parse_de_number(b.get("close")) or b.get("close")
-                v = b.get("volume", 0)
-                if isinstance(v, str):
-                    v = parse_de_number(v) or 0
-                rows.append({"time": t, "Open": float(o), "High": float(h),
-                             "Low": float(lo), "Close": float(c), "Volume": int(v)})
+                o = _bar_num(b.get("open"))
+                h = _bar_num(b.get("high"))
+                lo = _bar_num(b.get("low"))
+                c = _bar_num(b.get("close"))
+                v = _bar_num(b.get("volume", 0)) or 0
+                if None in (o, h, lo, c):
+                    continue
+                rows.append({"time": t, "Open": o, "High": h,
+                             "Low": lo, "Close": c, "Volume": int(v)})
             if rows:
                 df = pd.DataFrame(rows)
                 df.index = pd.to_datetime(df["time"], unit="s", utc=True).dt.tz_convert(ET)
