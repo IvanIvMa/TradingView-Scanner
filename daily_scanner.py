@@ -394,8 +394,11 @@ def tv_confirm(mcp, gappers, today_et):
         if not bars:
             g["data_source"] = "yfinance"
             continue
-        for k in ("premarket_price", "premarket_volume", "premarket_time", "premarket_gap_pct",
-                  "intraday_price", "intraday_time", "intraday_volume", "intraday_gap_pct"):
+        # Overwrite price/time/gap from TV (live & precise), but NOT volume:
+        # TradingView volume over CDP/extended-hours is unreliable (often 0),
+        # so keep yfinance's volume, which is the dependable source.
+        for k in ("premarket_price", "premarket_time", "premarket_gap_pct",
+                  "intraday_price", "intraday_time", "intraday_gap_pct"):
             if bars.get(k) is not None:
                 g[k] = bars[k]
         g["data_source"] = "TradingView MCP"
@@ -526,19 +529,12 @@ def main():
             if bars is None:
                 continue
 
-            float_shares = None
-            try:
-                info = yf.Ticker(sym).info or {}
-                float_shares = info.get("floatShares")
-            except Exception:
-                pass
-
             rec = {
                 "symbol": sym,
                 "name": yahoo_name_map.get(sym, ""),
                 "isin": isin_map.get(sym),
                 "yahoo_displayed_gap_pct": round(yahoo_pct_map.get(sym, 0), 2),
-                "float_shares": float_shares,
+                "float_shares": None,  # fetched only for the final gappers (Step 4)
                 "data_source": "yfinance",
             }
             rec.update(bars)
@@ -576,6 +572,15 @@ def main():
 
     filtered.sort(key=lambda r: get_effective_gap(r), reverse=True)
     filtered = filtered[:TOP_N]
+
+    # Float shares only for the final gappers (one yf.info call each) — fetching
+    # for all 100 wasted ~70s on tickers that never survive the filter.
+    for r in filtered:
+        if r.get("float_shares") is None:
+            try:
+                r["float_shares"] = (yf.Ticker(r["symbol"]).info or {}).get("floatShares")
+            except Exception:
+                pass
 
     # Step 4b: confirm the final gappers with precise TradingView MCP data.
     # Only the handful that survived the filter — fast enough for premarket.
