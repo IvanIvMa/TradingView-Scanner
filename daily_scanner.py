@@ -314,6 +314,95 @@ def fetch_data_yfinance(tickers):
     return frames
 
 
+def _normalize_index(df):
+    """Ensure the DataFrame index is tz-aware in ET."""
+    if df.index.tz is None:
+        df.index = df.index.tz_localize("UTC").tz_convert(ET)
+    elif str(df.index.tz) != str(ET):
+        df.index = df.index.tz_convert(ET)
+    return df
+
+
+def compute_bars(df, today_et, prev_close_override=None):
+    """From a 1-min OHLCV DataFrame, derive prev_close + premarket/regular
+    price, volume and time. Returns a dict of fields, or None if unusable.
+    prev_close_override lets the TV-confirm step reuse yfinance's reliable
+    daily close (TV's short 1-min window may not reach yesterday)."""
+    df = df.dropna()
+    if df.empty:
+        return None
+    df = _normalize_index(df)
+
+    if prev_close_override is not None:
+        prev_close = prev_close_override
+    else:
+        yesterday = df[df.index.date < today_et]
+        reg_yesterday = yesterday[yesterday.index.hour < 16]
+        if reg_yesterday.empty:
+            return None
+        prev_close = float(reg_yesterday["Close"].iloc[-1])
+
+    today_bars = df[df.index.date == today_et]
+    premarket = today_bars[
+        (today_bars.index.hour >= 4) &
+        ((today_bars.index.hour < 9) | ((today_bars.index.hour == 9) & (today_bars.index.minute < 30)))
+    ]
+    regular = today_bars[
+        ((today_bars.index.hour > 9) | ((today_bars.index.hour == 9) & (today_bars.index.minute >= 30))) &
+        (today_bars.index.hour < 16)
+    ]
+
+    pm_price = pm_volume = pm_time = None
+    if not premarket.empty:
+        pm_price = float(premarket["Close"].iloc[-1])
+        pm_volume = int(premarket["Volume"].sum())
+        pm_time = premarket.index[-1].strftime("%H:%M ET")
+
+    intraday_price = intraday_time = intraday_volume = None
+    if not regular.empty:
+        intraday_price = float(regular["Close"].iloc[-1])
+        intraday_time = regular.index[-1].strftime("%H:%M ET")
+        intraday_volume = int(regular["Volume"].sum())
+
+    return {
+        "prev_close": round(prev_close, 2),
+        "premarket_price": round(pm_price, 2) if pm_price else None,
+        "premarket_volume": pm_volume,
+        "premarket_time": pm_time,
+        "premarket_gap_pct": round((pm_price - prev_close) / prev_close * 100, 2) if pm_price else None,
+        "intraday_price": round(intraday_price, 2) if intraday_price else None,
+        "intraday_time": intraday_time,
+        "intraday_volume": intraday_volume,
+        "intraday_gap_pct": round((intraday_price - prev_close) / prev_close * 100, 2) if intraday_price else None,
+    }
+
+
+def tv_confirm(mcp, gappers, today_et):
+    """Refresh the final filtered gappers with precise TradingView MCP data.
+    Keeps yfinance's prev_close (reliable daily close), but overwrites the
+    intraday/premarket price, volume, time and gap from TV's live 1-min bars.
+    Updates each gapper dict in place and tags its data_source."""
+    syms = [g["symbol"] for g in gappers]
+    frames = fetch_data_mcp(mcp, syms, today_et)
+    confirmed = 0
+    for g in gappers:
+        df = frames.get(g["symbol"])
+        if df is None:
+            g["data_source"] = "yfinance"
+            continue
+        bars = compute_bars(df, today_et, prev_close_override=g.get("prev_close"))
+        if not bars:
+            g["data_source"] = "yfinance"
+            continue
+        for k in ("premarket_price", "premarket_volume", "premarket_time", "premarket_gap_pct",
+                  "intraday_price", "intraday_time", "intraday_volume", "intraday_gap_pct"):
+            if bars.get(k) is not None:
+                g[k] = bars[k]
+        g["data_source"] = "TradingView MCP"
+        confirmed += 1
+    return confirmed
+
+
 # =============================================================================
 # Main logic
 # =============================================================================
@@ -388,29 +477,14 @@ def main():
             return
         tickers = new_tickers
 
-    # Step 2: Fetch price data (TradingView MCP primary, yfinance fallback)
-    log("--- Step 2: Price data ---")
-    mcp = try_connect_mcp()
+    # Step 2: Fast universe scan via yfinance batch (filter first, confirm later).
+    # TradingView MCP loads one chart at a time (~11s/ticker), far too slow for
+    # 100 tickers inside the premarket window — so yfinance does the broad scan
+    # and TV confirms only the final gappers in Step 4b.
+    log("--- Step 2: Price data (yfinance batch scan) ---")
     data_source = "yfinance"
-
-    if mcp:
-        log(f"Fetching 1-min bars from TradingView MCP for {len(tickers)} tickers...")
-        data = fetch_data_mcp(mcp, tickers, today_et)
-        mcp.close()
-        if len(data) >= len(tickers) * 0.5:
-            data_source = "TradingView MCP"
-            log(f"TradingView: got data for {len(data)}/{len(tickers)} tickers")
-        else:
-            log(f"TradingView only got {len(data)}/{len(tickers)} — supplementing with yfinance")
-            missing_tickers = [t for t in tickers if t not in data]
-            if missing_tickers:
-                yf_data = fetch_data_yfinance(missing_tickers)
-                data.update(yf_data)
-            data_source = "TradingView MCP + yfinance"
-    else:
-        log("TradingView not available — using yfinance batch download")
-        log(f"Downloading 1-min bars for {len(tickers)} tickers (~30 sec)...")
-        data = fetch_data_yfinance(tickers)
+    log(f"Downloading 1-min bars for {len(tickers)} tickers (~30 sec)...")
+    data = fetch_data_yfinance(tickers)
 
     # Step 3: Premarket calculation
     log("--- Step 3: Premarket calculation ---")
@@ -448,45 +522,9 @@ def main():
             df = data.get(sym)
             if df is None:
                 continue
-            df = df.dropna()
-            if df.empty:
+            bars = compute_bars(df, today_et)
+            if bars is None:
                 continue
-            if df.index.tz is None:
-                df.index = df.index.tz_localize("UTC").tz_convert(ET)
-            elif str(df.index.tz) != str(ET):
-                df.index = df.index.tz_convert(ET)
-
-            yesterday = df[df.index.date < today_et]
-            reg_yesterday = yesterday[yesterday.index.hour < 16]
-            if reg_yesterday.empty:
-                continue
-            prev_close = float(reg_yesterday["Close"].iloc[-1])
-
-            today_bars = df[df.index.date == today_et]
-            premarket = today_bars[
-                (today_bars.index.hour >= 4) &
-                ((today_bars.index.hour < 9) | ((today_bars.index.hour == 9) & (today_bars.index.minute < 30)))
-            ]
-            regular = today_bars[
-                ((today_bars.index.hour > 9) | ((today_bars.index.hour == 9) & (today_bars.index.minute >= 30))) &
-                (today_bars.index.hour < 16)
-            ]
-
-            pm_price = pm_volume = pm_time = None
-            if not premarket.empty:
-                pm_price = float(premarket["Close"].iloc[-1])
-                pm_volume = int(premarket["Volume"].sum())
-                pm_time = premarket.index[-1].strftime("%H:%M ET")
-
-            intraday_price = intraday_time = intraday_volume = None
-            if not regular.empty:
-                intraday_price = float(regular["Close"].iloc[-1])
-                intraday_time = regular.index[-1].strftime("%H:%M ET")
-                intraday_volume = int(regular["Volume"].sum())
-
-            pm_gap = round((pm_price - prev_close) / prev_close * 100, 2) if pm_price else None
-            intraday_gap = round((intraday_price - prev_close) / prev_close * 100, 2) if intraday_price else None
-            yahoo_gap = round(yahoo_pct_map.get(sym, 0), 2)
 
             float_shares = None
             try:
@@ -495,22 +533,16 @@ def main():
             except Exception:
                 pass
 
-            results.append({
+            rec = {
                 "symbol": sym,
                 "name": yahoo_name_map.get(sym, ""),
                 "isin": isin_map.get(sym),
-                "prev_close": round(prev_close, 2),
-                "premarket_price": round(pm_price, 2) if pm_price else None,
-                "premarket_volume": pm_volume,
-                "premarket_time": pm_time,
-                "premarket_gap_pct": pm_gap,
-                "intraday_price": round(intraday_price, 2) if intraday_price else None,
-                "intraday_time": intraday_time,
-                "intraday_gap_pct": intraday_gap,
-                "intraday_volume": intraday_volume,
-                "yahoo_displayed_gap_pct": yahoo_gap,
+                "yahoo_displayed_gap_pct": round(yahoo_pct_map.get(sym, 0), 2),
                 "float_shares": float_shares,
-            })
+                "data_source": "yfinance",
+            }
+            rec.update(bars)
+            results.append(rec)
         except Exception as e:
             log(f"  ! {sym}: {e}")
 
@@ -544,6 +576,25 @@ def main():
 
     filtered.sort(key=lambda r: get_effective_gap(r), reverse=True)
     filtered = filtered[:TOP_N]
+
+    # Step 4b: confirm the final gappers with precise TradingView MCP data.
+    # Only the handful that survived the filter — fast enough for premarket.
+    if filtered:
+        log("--- Step 4b: TradingView MCP confirmation ---")
+        mcp = try_connect_mcp()
+        if mcp:
+            log(f"Confirming {len(filtered)} gappers via TradingView MCP...")
+            try:
+                n = tv_confirm(mcp, filtered, today_et)
+            finally:
+                mcp.close()
+            log(f"TradingView confirmed {n}/{len(filtered)} gappers")
+            if n > 0:
+                data_source = "yfinance scan + TradingView MCP confirm"
+            # TV may shift gaps slightly — re-sort to keep ranking honest
+            filtered.sort(key=lambda r: get_effective_gap(r) or 0, reverse=True)
+        else:
+            log("TradingView not available — keeping yfinance data for final gappers")
 
     if merge and existing_gappers:
         merged = existing_gappers + filtered
