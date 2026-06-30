@@ -25,6 +25,19 @@ from datetime import datetime
 from zoneinfo import ZoneInfo
 from xml.etree import ElementTree
 
+# Raise the file-descriptor limit (mirrors `ulimit -n 4096` from the old bash
+# script). launchd starts processes with a low default (~256); a 100-ticker
+# yfinance run opens many sockets + an sqlite cache and otherwise hits
+# "[Errno 24] Too many open files".
+try:
+    import resource
+    _soft, _hard = resource.getrlimit(resource.RLIMIT_NOFILE)
+    _target = 4096 if _hard == resource.RLIM_INFINITY else min(4096, _hard)
+    if _soft < _target:
+        resource.setrlimit(resource.RLIMIT_NOFILE, (_target, _hard))
+except Exception:
+    pass
+
 import yfinance as yf
 import pandas as pd
 
