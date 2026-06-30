@@ -121,17 +121,21 @@ function renderGappers(g) {
   tbody.innerHTML = g.gappers.map(function(gp) {
     var gapVal = gp.premarket_gap_pct != null ? gp.premarket_gap_pct : gp.intraday_gap_pct;
     var gap = gapVal != null ? '+' + gapVal.toFixed(1) + '%' : '--';
-    var vol = gp.premarket_volume != null ? gp.premarket_volume : gp.volume;
-    vol = vol != null ? formatNumber(vol) : '--';
+    var volRaw = gp.intraday_volume || gp.premarket_volume;
+    var vol = volRaw != null ? formatNumber(volRaw) : '--';
     var fl = gp.float_shares ? formatNumber(gp.float_shares) : '--';
+    var floatColor = '';
+    if (gp.float_shares && gp.float_shares < 20e6) floatColor = 'color:var(--green);font-weight:600';
+    else if (gp.float_shares && gp.float_shares < 50e6) floatColor = 'color:var(--yellow)';
     var priceVal = gp.premarket_price != null ? gp.premarket_price : (gp.intraday_price != null ? gp.intraday_price : gp.price);
     var price = priceVal != null ? '$' + priceVal.toFixed(2) : '--';
+    var nameStr = gp.name ? '<div style="font-size:11px;color:var(--text-3)">' + gp.name + '</div>' : '';
     return '<tr>' +
-      '<td class="text-left" style="font-weight:600;color:var(--blue)">' + gp.symbol + '</td>' +
+      '<td class="text-left"><span style="font-weight:600;color:var(--blue)">' + gp.symbol + '</span>' + nameStr + '</td>' +
       '<td class="text-right mono">' + price + '</td>' +
       '<td class="text-right mono color-green">' + gap + '</td>' +
       '<td class="text-right mono">' + vol + '</td>' +
-      '<td class="text-right mono">' + fl + '</td>' +
+      '<td class="text-right mono" style="' + floatColor + '">' + fl + '</td>' +
       '<td class="text-center"><button class="btn-sm" onclick="loadChartForSymbol(\'' + gp.symbol + '\')">Chart</button></td>' +
       '</tr>';
   }).join('');

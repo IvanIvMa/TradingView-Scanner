@@ -273,10 +273,11 @@ for sym in tickers:
             pm_volume = int(premarket["Volume"].sum())
             pm_time = premarket.index[-1].strftime("%H:%M ET")
 
-        intraday_price = intraday_time = None
+        intraday_price = intraday_time = intraday_volume = None
         if not regular.empty:
             intraday_price = float(regular["Close"].iloc[-1])
             intraday_time = regular.index[-1].strftime("%H:%M ET")
+            intraday_volume = int(regular["Volume"].sum())
 
         # Premarket-Gap (echte Definition)
         if pm_price:
@@ -293,6 +294,14 @@ for sym in tickers:
         # Yahoo's eigene Anzeige
         yahoo_gap = round(yahoo_pct_map.get(sym, 0), 2)
 
+        # Float shares
+        float_shares = None
+        try:
+            info = yf.Ticker(sym).info or {}
+            float_shares = info.get("floatShares")
+        except Exception:
+            pass
+
         results.append({
             "symbol": sym,
             "name": yahoo_name_map.get(sym, ""),
@@ -305,7 +314,9 @@ for sym in tickers:
             "intraday_price": round(intraday_price, 2) if intraday_price else None,
             "intraday_time": intraday_time,
             "intraday_gap_pct": intraday_gap,
+            "intraday_volume": intraday_volume,
             "yahoo_displayed_gap_pct": yahoo_gap,
+            "float_shares": float_shares,
         })
     except Exception as e:
         print(f"  ! {sym}: {e}", file=sys.stderr)
