@@ -1,0 +1,188 @@
+<!DOCTYPE html>
+<html lang="en">
+<head>
+  <meta charset="UTF-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1.0">
+  <title>TJL Scanner — Trading Cockpit</title>
+  <script src="/static/lightweight-charts.js"></script>
+  <link rel="stylesheet" href="/static/style.css">
+</head>
+<body>
+
+  <!-- Top Bar -->
+  <header class="topbar">
+    <div class="topbar-left">
+      <div class="logo"><span class="logo-accent">TJL</span> Scanner</div>
+      <span class="version-badge">v2.0</span>
+    </div>
+    <div class="topbar-right">
+      <div id="regime-badge" class="regime-badge">
+        <span class="dot dot-gray"></span>
+        <span>Regime: --</span>
+      </div>
+      <div class="market-status-wrap">
+        <span id="market-dot" class="dot dot-gray"></span>
+        <span id="market-status">--</span>
+      </div>
+      <div id="clock" class="clock">--:--:-- ET</div>
+      <button onclick="openSettings()" class="icon-btn" title="Settings">
+        <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M10.325 4.317c.426-1.756 2.924-1.756 3.35 0a1.724 1.724 0 002.573 1.066c1.543-.94 3.31.826 2.37 2.37a1.724 1.724 0 001.066 2.573c1.756.426 1.756 2.924 0 3.35a1.724 1.724 0 00-1.066 2.573c.94 1.543-.826 3.31-2.37 2.37a1.724 1.724 0 00-2.573 1.066c-.426 1.756-2.924 1.756-3.35 0a1.724 1.724 0 00-2.573-1.066c-1.543.94-3.31-.826-2.37-2.37a1.724 1.724 0 00-1.066-2.573c-1.756-.426-1.756-2.924 0-3.35a1.724 1.724 0 001.066-2.573c-.94-1.543.826-3.31 2.37-2.37.996.608 2.296.07 2.572-1.065z"/>
+          <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M15 12a3 3 0 11-6 0 3 3 0 016 0z"/>
+        </svg>
+      </button>
+    </div>
+  </header>
+
+  <!-- Main Content -->
+  <main class="main-content">
+
+    <!-- Row 1: Stat Cards -->
+    <div class="stats-row">
+      <div id="card-regime" class="card">
+        <div class="card-label">Market Regime</div>
+        <div class="regime-content">
+          <div id="regime-icon" class="regime-icon">--</div>
+          <div>
+            <div id="regime-label" class="regime-title">Loading...</div>
+            <div id="regime-detail" class="regime-detail"></div>
+          </div>
+        </div>
+      </div>
+      <div class="card">
+        <div class="card-label">Gappers Today</div>
+        <div id="stat-gappers" class="stat-number">--</div>
+        <div id="stat-gappers-sub" class="stat-sub">--</div>
+      </div>
+      <div class="card">
+        <div class="card-label">PASS Signals</div>
+        <div id="stat-passes" class="stat-number color-green">--</div>
+        <div id="stat-passes-sub" class="stat-sub">--</div>
+      </div>
+    </div>
+
+    <!-- Row 2: Tabs -->
+    <div class="tab-bar">
+      <button onclick="switchTab('positions')" id="tab-positions" class="tab tab-active">
+        Positions <span id="tab-pos-count" class="count-badge">0</span>
+      </button>
+      <button onclick="switchTab('signals')" id="tab-signals" class="tab">Signals</button>
+      <button onclick="switchTab('gappers')" id="tab-gappers" class="tab">Gappers</button>
+      <button onclick="switchTab('history')" id="tab-history" class="tab">History</button>
+      <button onclick="switchTab('chart')" id="tab-chart" class="tab">Chart</button>
+    </div>
+
+    <!-- Tab: Positions -->
+    <div id="content-positions" class="tab-content">
+      <div id="positions-grid" class="positions-grid">
+        <div class="card card-empty">
+          <div class="empty-icon">&#x1F4AD;</div>
+          <div>No open positions</div>
+        </div>
+      </div>
+    </div>
+
+    <!-- Tab: Signals -->
+    <div id="content-signals" class="tab-content hidden">
+      <div id="signals-container" class="signals-list"></div>
+    </div>
+
+    <!-- Tab: Gappers -->
+    <div id="content-gappers" class="tab-content hidden">
+      <div class="card table-card">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th class="text-left">Symbol</th>
+              <th class="text-right">Price</th>
+              <th class="text-right">Gap %</th>
+              <th class="text-right">Volume</th>
+              <th class="text-right">Float</th>
+              <th class="text-center">Action</th>
+            </tr>
+          </thead>
+          <tbody id="gappers-tbody"></tbody>
+        </table>
+      </div>
+    </div>
+
+    <!-- Tab: History -->
+    <div id="content-history" class="tab-content hidden">
+      <div id="history-container" class="signals-list"></div>
+    </div>
+
+    <!-- Tab: Chart -->
+    <div id="content-chart" class="tab-content hidden">
+      <div class="card">
+        <div class="chart-controls">
+          <input id="chart-symbol-input" type="text" placeholder="Symbol (e.g. IRDM)" class="input">
+          <select id="chart-period" class="input">
+            <option value="1d">Today</option>
+            <option value="5d">5 Days</option>
+            <option value="1mo">1 Month</option>
+            <option value="3mo">3 Months</option>
+          </select>
+          <select id="chart-interval" class="input">
+            <option value="1m">1 Min</option>
+            <option value="5m">5 Min</option>
+            <option value="15m">15 Min</option>
+            <option value="1h">1 Hour</option>
+            <option value="1d">1 Day</option>
+          </select>
+          <button onclick="loadChart()" class="btn-primary">Load</button>
+        </div>
+        <div id="main-chart" style="height: 500px;"></div>
+      </div>
+    </div>
+
+  </main>
+
+  <!-- Settings Modal -->
+  <div id="settings-modal" class="modal-overlay hidden">
+    <div class="modal-content card">
+      <div class="modal-header">
+        <h2>Settings</h2>
+        <button onclick="closeSettings()" class="icon-btn">
+          <svg width="20" height="20" fill="none" stroke="currentColor" viewBox="0 0 24 24">
+            <path stroke-linecap="round" stroke-linejoin="round" stroke-width="2" d="M6 18L18 6M6 6l12 12"/>
+          </svg>
+        </button>
+      </div>
+      <div class="settings-grid">
+        <div class="field">
+          <label>Partial Profit ATR Multiplier</label>
+          <input id="param-partial-atr" type="number" step="0.1" class="input mono">
+        </div>
+        <div class="field">
+          <label>Partial Profit % (Position Size)</label>
+          <input id="param-partial-pct" type="number" class="input mono">
+        </div>
+        <div class="field">
+          <label>Trailing Stop %</label>
+          <input id="param-trail-pct" type="number" step="0.1" class="input mono">
+        </div>
+        <div class="field">
+          <label>ATR Period</label>
+          <input id="param-atr-period" type="number" class="input mono">
+        </div>
+        <div class="field-row">
+          <div class="field">
+            <label>EOD Hour (ET)</label>
+            <input id="param-eod-hour" type="number" class="input mono">
+          </div>
+          <div class="field">
+            <label>EOD Minute</label>
+            <input id="param-eod-min" type="number" class="input mono">
+          </div>
+        </div>
+      </div>
+      <div class="modal-footer">
+        <button onclick="closeSettings()" class="btn-ghost">Cancel</button>
+        <button onclick="saveSettings()" class="btn-primary">Save</button>
+      </div>
+    </div>
+  </div>
+
+  <script src="/static/app.js"></script>
+</body>
+</html>

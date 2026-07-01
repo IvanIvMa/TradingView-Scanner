@@ -33,7 +33,7 @@ done
 
 # .env laden
 if [ ! -f .env ]; then
-    echo "FEHLER: .env Datei nicht gefunden" >&2
+    echo "ERROR: .env file not found" >&2
     exit 1
 fi
 export $(grep -v '^#' .env | xargs)
@@ -234,14 +234,14 @@ def market_regime_line():
     if spy is None and qqq is None:
         return ""
     if spy and qqq:
-        tag = "🟢 Rückenwind — SPY &amp; QQQ über SMA200"
+        tag = "🟢 Tailwind — SPY &amp; QQQ above SMA200"
     elif spy is False and qqq is False:
-        tag = "🔴 Gegenwind — SPY &amp; QQQ unter SMA200 (Vorsicht bei Longs)"
+        tag = "🔴 Headwind — SPY &amp; QQQ below SMA200 (caution on longs)"
     else:
-        s = "über" if spy else ("unter" if spy is False else "?")
-        q = "über" if qqq else ("unter" if qqq is False else "?")
-        tag = f"🟡 Gemischt — SPY {s}, QQQ {q} SMA200"
-    return f"📈 Markt-Regime: {tag}"
+        s = "above" if spy else ("below" if spy is False else "?")
+        q = "above" if qqq else ("below" if qqq is False else "?")
+        tag = f"🟡 Mixed — SPY {s}, QQQ {q} SMA200"
+    return f"📈 Market regime: {tag}"
 
 regime_line = market_regime_line() if send else ""
 
@@ -295,13 +295,13 @@ if d.get('regime_line'):
 lines.append('')
 hits = d['hits']
 if hits:
-    lines.append(f\"<b>{len(hits)} PASS-Signal(e):</b>\")
+    lines.append(f\"<b>{len(hits)} PASS signal(s):</b>\")
     for h in hits:
         new = ' 🆕' if h['symbol'] in d['new_passes'] else ''
         lines.append(f\"✅ <b>{h['symbol']}</b>{new}  \${h['curr_price']}\")
-        lines.append(f\"   Vortageshoch \${h['prev_daily_high']} | PMH \${h.get('pmh','—')} | HOD \${h.get('today_hod','—')} | SMA200 \${h['sma200']}\")
+        lines.append(f\"   Prev high \${h['prev_daily_high']} | PMH \${h.get('pmh','—')} | HOD \${h.get('today_hod','—')} | SMA200 \${h['sma200']}\")
 else:
-    lines.append('Keine PASS-Signale in diesem Lauf.')
+    lines.append('No PASS signals in this run.')
     fails = {}
     for r in d['all_results']:
         fails[r['result']] = fails.get(r['result'], 0) + 1
@@ -310,9 +310,9 @@ else:
 print('\n'.join(lines))
 ")
     send_telegram "$MSG"
-    echo "  Telegram gesendet." | tee -a "$LOG"
+    echo "  Telegram sent." | tee -a "$LOG"
 else
-    echo "  Kein neues Signal — keine Telegram-Nachricht (Anti-Spam)." | tee -a "$LOG"
+    echo "  No new signal — no Telegram message (anti-spam)." | tee -a "$LOG"
 fi
 
 # =============================================================================

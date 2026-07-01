@@ -6,8 +6,9 @@
     <string>com.tradingview.scanner</string>
     <key>ProgramArguments</key>
     <array>
-        <string>/bin/bash</string>
-        <string>/Users/ivan/TradingViewScanner/daily_scanner.sh</string>
+        <string>/usr/bin/env</string>
+        <string>python3</string>
+        <string>/Users/ivan/TradingViewScanner/daily_scanner.py</string>
     </array>
     <!-- Feuert zu ZWEI Berlin-Zeiten (Normal- + DST-Gap-Woche); ET-Gate im Script
          laesst nur den Lauf zur Ziel-ET-Zeit durch. -->
@@ -72,6 +73,18 @@
     <dict>
         <key>PATH</key>
         <string>/usr/local/bin:/usr/bin:/bin:/Library/Frameworks/Python.framework/Versions/3.14/bin</string>
+    </dict>
+    <!-- launchd starts jobs with a low FD limit (~256); a 100-ticker yfinance
+         run needs more or it hits "[Errno 24] Too many open files". -->
+    <key>SoftResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>4096</integer>
+    </dict>
+    <key>HardResourceLimits</key>
+    <dict>
+        <key>NumberOfFiles</key>
+        <integer>4096</integer>
     </dict>
 </dict>
 </plist>

@@ -34,13 +34,13 @@ while [ $# -gt 0 ]; do
 done
 
 if [ ! -f .env ]; then
-    echo "FEHLER: .env Datei nicht gefunden" >&2
+    echo "ERROR: .env file not found" >&2
     exit 1
 fi
 export $(grep -v '^#' .env | xargs)
 
 if [ -z "${TELEGRAM_BOT_TOKEN:-}" ] || [ -z "${TELEGRAM_CHAT_ID:-}" ]; then
-    echo "FEHLER: TELEGRAM_BOT_TOKEN und TELEGRAM_CHAT_ID müssen in .env gesetzt sein" >&2
+    echo "ERROR: TELEGRAM_BOT_TOKEN and TELEGRAM_CHAT_ID must be set in .env" >&2
     exit 1
 fi
 
@@ -273,10 +273,11 @@ for sym in tickers:
             pm_volume = int(premarket["Volume"].sum())
             pm_time = premarket.index[-1].strftime("%H:%M ET")
 
-        intraday_price = intraday_time = None
+        intraday_price = intraday_time = intraday_volume = None
         if not regular.empty:
             intraday_price = float(regular["Close"].iloc[-1])
             intraday_time = regular.index[-1].strftime("%H:%M ET")
+            intraday_volume = int(regular["Volume"].sum())
 
         # Premarket-Gap (echte Definition)
         if pm_price:
@@ -293,6 +294,14 @@ for sym in tickers:
         # Yahoo's eigene Anzeige
         yahoo_gap = round(yahoo_pct_map.get(sym, 0), 2)
 
+        # Float shares
+        float_shares = None
+        try:
+            info = yf.Ticker(sym).info or {}
+            float_shares = info.get("floatShares")
+        except Exception:
+            pass
+
         results.append({
             "symbol": sym,
             "name": yahoo_name_map.get(sym, ""),
@@ -305,7 +314,9 @@ for sym in tickers:
             "intraday_price": round(intraday_price, 2) if intraday_price else None,
             "intraday_time": intraday_time,
             "intraday_gap_pct": intraday_gap,
+            "intraday_volume": intraday_volume,
             "yahoo_displayed_gap_pct": yahoo_gap,
+            "float_shares": float_shares,
         })
     except Exception as e:
         print(f"  ! {sym}: {e}", file=sys.stderr)
@@ -472,20 +483,20 @@ if is_merge and new_count == 0:
 
 if is_merge:
     lines = [f"🔄 <b>Scanner A UPDATE — {now} CEST</b>"]
-    lines.append(f"<i>{new_count} neue Gappers nach Marktöffnung entdeckt!</i>\n")
+    lines.append(f"<i>{new_count} new gappers discovered after market open!</i>\n")
 else:
     lines = [f"📊 <b>Daily Premarket Report — {now} CEST</b>"]
-    lines.append(f"<i>Universe: {data.get('universe_size', '?')} Aktien (Yahoo Top Gainers)</i>\n")
+    lines.append(f"<i>Universe: {data.get('universe_size', '?')} stocks (Yahoo Top Gainers)</i>\n")
 
 if gappers:
     if not is_merge:
         has_premarket = any(g.get("premarket_gap_pct") is not None for g in gappers)
         if has_premarket:
-            lines.append(f"<b>{len(gappers)} Gappers gefunden:</b>")
+            lines.append(f"<b>{len(gappers)} gappers found:</b>")
         else:
-            lines.append(f"<b>{len(gappers)} Gappers (Markt offen — Intraday-Daten):</b>")
+            lines.append(f"<b>{len(gappers)} gappers (market open — intraday data):</b>")
     else:
-        lines.append(f"<b>Aktualisierte Liste ({len(gappers)} Gappers):</b>")
+        lines.append(f"<b>Updated list ({len(gappers)} gappers):</b>")
     lines.append("")
 
     for g in gappers:
@@ -528,22 +539,22 @@ if gappers:
             lines.append(f"   📰 <i>{cat[:75]}</i>")
         lines.append("")
 else:
-    lines.append("Keine Gappers nach Filter (Gap>5%, Preis>$3)")
+    lines.append("No gappers after filter (gap>5%, price>$3)")
 
 if is_merge:
-    lines.append(f"\n<i>15:45-Ergänzung: Yahoo-Screener nach Marktöffnung aktualisiert</i>")
+    lines.append(f"\n<i>15:45 update: Yahoo screener refreshed after market open</i>")
 else:
-    lines.append(f"\n<i>Premarket selbst berechnet (4:00-9:30 ET) | Universe: Yahoo Top 100</i>")
-    lines.append(f"<i>TJL-Signale folgen ab 16:00 Berlin (Scanner B, bei Markteröffnung)</i>")
+    lines.append(f"\n<i>Premarket calculated (4:00-9:30 ET) | Universe: Yahoo Top 100</i>")
+    lines.append(f"<i>TJL signals follow at 10:00 ET (Scanner B, at market open)</i>")
 print("\n".join(lines))
 PYEOF
 )
 
 if [ -n "$MSG" ]; then
     send_telegram "$MSG"
-    echo "  Telegram gesendet!" | tee -a "$LOG"
+    echo "  Telegram sent!" | tee -a "$LOG"
 else
-    echo "  Merge: keine neuen Gappers — kein Telegram." | tee -a "$LOG"
+    echo "  Merge: no new gappers — no Telegram." | tee -a "$LOG"
 fi
 echo "" | tee -a "$LOG"
 echo "=== Daily Scanner v3 fertig ===" | tee -a "$LOG"
