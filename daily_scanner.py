@@ -615,10 +615,12 @@ def main():
             log("TradingView not available — keeping yfinance data for final gappers")
 
     if merge and existing_gappers:
-        merged = existing_gappers + filtered
-        merged.sort(key=lambda r: get_effective_gap(r) or 0, reverse=True)
-        merged = merged[:TOP_N]
-        new_count = len(filtered)
+        # Premarket gappers are always kept — new post-open gappers are added
+        # separately (up to TOP_N new ones) without displacing premarket results.
+        filtered.sort(key=lambda r: get_effective_gap(r) or 0, reverse=True)
+        new_top = filtered[:TOP_N]
+        merged = existing_gappers + new_top
+        new_count = len(new_top)
     else:
         merged = filtered
         new_count = len(filtered)
@@ -720,90 +722,109 @@ def build_telegram_message(data, merge, existing_symbols):
         src = data.get("data_source", "yfinance")
         lines.append(f"<i>Universe: {data.get('universe_size', '?')} stocks (Yahoo Top Gainers) | Data: {src}</i>\n")
 
-    if gappers:
-        has_pm = any(g.get("premarket_gap_pct") is not None for g in gappers)
-        if not merge:
-            if has_pm:
-                lines.append(f"<b>{len(gappers)} gappers found:</b>")
+    def _fmt_gapper(g, is_new=False):
+        sym = g["symbol"]
+        name = g.get("name") or ""
+        isin = g.get("isin") or "—"
+        isin_part = f" ({isin})" if isin != "—" else ""
+        name_part = f" — {name}" if name else ""
+        pm = g.get("premarket_gap_pct")
+        yh = g.get("yahoo_displayed_gap_pct", 0)
+        intra = g.get("intraday_gap_pct")
+        pm_time = g.get("premarket_time")
+        pm_vol = g.get("premarket_volume") or 0
+        price = g.get("premarket_price") or g.get("intraday_price") or g.get("prev_close")
+
+        float_s = g.get("float_shares")
+        if float_s:
+            if float_s >= 1_000_000_000:
+                float_str = f"{float_s / 1_000_000_000:.1f}B"
+            elif float_s >= 1_000_000:
+                float_str = f"{float_s / 1_000_000:.1f}M"
             else:
-                lines.append(f"<b>{len(gappers)} gappers (market open — intraday data):</b>")
+                float_str = f"{float_s / 1000:.0f}K"
         else:
-            lines.append(f"<b>Updated list ({len(gappers)} gappers):</b>")
+            float_str = ""
+
+        if pm_vol > 1_000_000:
+            vol_str = f"{pm_vol / 1_000_000:.1f}M"
+        elif pm_vol > 1000:
+            vol_str = f"{pm_vol / 1000:.0f}K"
+        else:
+            vol_str = str(pm_vol) if pm_vol > 0 else ""
+
+        new_marker = " \U0001f195" if is_new else ""
+        out = []
+
+        if pm is not None:
+            diff = pm - yh
+            diff_str = f" (Yahoo: {yh:+.2f}%, Δ {diff:+.2f}pp)" if abs(diff) > 0.5 else ""
+            out.append(f"<b>{g['rank']}. {sym}</b>{name_part}{isin_part}{new_marker}")
+            extras = []
+            if vol_str:
+                extras.append(f"Vol: {vol_str}")
+            if float_str:
+                extras.append(f"Float: {float_str}")
+            extra_line = f"   {' | '.join(extras)}" if extras else ""
+            out.append(f"   Premarket: <b>{pm:+.2f}%</b> ${price:.2f} @ {pm_time}{diff_str}")
+            if extra_line:
+                out.append(extra_line)
+        else:
+            out.append(f"<b>{g['rank']}. {sym}</b>{name_part}{isin_part}{new_marker}")
+            extras = []
+            if float_str:
+                extras.append(f"Float: {float_str}")
+            intra_vol = g.get("intraday_volume") or 0
+            if intra_vol > 1_000_000:
+                extras.append(f"Vol: {intra_vol / 1_000_000:.1f}M")
+            elif intra_vol > 1000:
+                extras.append(f"Vol: {intra_vol / 1000:.0f}K")
+            extra_line = f"   {' | '.join(extras)}" if extras else ""
+            out.append(f"   Intraday: <b>{intra:+.2f}%</b> ${price:.2f}")
+            if extra_line:
+                out.append(extra_line)
+
+        cat = g.get("catalyst")
+        benz = g.get("catalyst_benzinga")
+        if benz:
+            out.append(f"   \U0001f4f0 <i>{benz[:75]}</i> <b>[Benzinga]</b>")
+        elif cat:
+            out.append(f"   \U0001f4f0 <i>{cat[:75]}</i>")
+        out.append("")
+        return out
+
+    if merge and gappers:
+        premarket = [g for g in gappers if g["symbol"] in existing_symbols]
+        postopen = [g for g in gappers if g["symbol"] not in existing_symbols]
+
+        lines.append(f"<b>Premarket Gappers ({len(premarket)}):</b>")
         lines.append("")
+        for i, g in enumerate(premarket, 1):
+            g["rank"] = i
+            lines.extend(_fmt_gapper(g))
 
-        for g in gappers:
-            sym = g["symbol"]
-            name = g.get("name") or ""
-            isin = g.get("isin") or "—"
-            isin_part = f" ({isin})" if isin != "—" else ""
-            name_part = f" — {name}" if name else ""
-            pm = g.get("premarket_gap_pct")
-            yh = g.get("yahoo_displayed_gap_pct", 0)
-            intra = g.get("intraday_gap_pct")
-            pm_time = g.get("premarket_time")
-            pm_vol = g.get("premarket_volume") or 0
-            price = g.get("premarket_price") or g.get("intraday_price") or g.get("prev_close")
-
-            float_s = g.get("float_shares")
-            if float_s:
-                if float_s >= 1_000_000_000:
-                    float_str = f"{float_s / 1_000_000_000:.1f}B"
-                elif float_s >= 1_000_000:
-                    float_str = f"{float_s / 1_000_000:.1f}M"
-                else:
-                    float_str = f"{float_s / 1000:.0f}K"
-            else:
-                float_str = ""
-
-            if pm_vol > 1_000_000:
-                vol_str = f"{pm_vol / 1_000_000:.1f}M"
-            elif pm_vol > 1000:
-                vol_str = f"{pm_vol / 1000:.0f}K"
-            else:
-                vol_str = str(pm_vol) if pm_vol > 0 else ""
-
-            new_marker = " \U0001f195" if (merge and sym not in existing_symbols) else ""
-
-            if pm is not None:
-                diff = pm - yh
-                diff_str = f" (Yahoo: {yh:+.2f}%, Δ {diff:+.2f}pp)" if abs(diff) > 0.5 else ""
-                lines.append(f"<b>{g['rank']}. {sym}</b>{name_part}{isin_part}{new_marker}")
-                extras = []
-                if vol_str:
-                    extras.append(f"Vol: {vol_str}")
-                if float_str:
-                    extras.append(f"Float: {float_str}")
-                extra_line = f"   {' | '.join(extras)}" if extras else ""
-                lines.append(f"   Premarket: <b>{pm:+.2f}%</b> ${price:.2f} @ {pm_time}{diff_str}")
-                if extra_line:
-                    lines.append(extra_line)
-            else:
-                lines.append(f"<b>{g['rank']}. {sym}</b>{name_part}{isin_part}{new_marker}")
-                extras = []
-                if float_str:
-                    extras.append(f"Float: {float_str}")
-                intra_vol = g.get("intraday_volume") or 0
-                if intra_vol > 1_000_000:
-                    extras.append(f"Vol: {intra_vol / 1_000_000:.1f}M")
-                elif intra_vol > 1000:
-                    extras.append(f"Vol: {intra_vol / 1000:.0f}K")
-                extra_line = f"   {' | '.join(extras)}" if extras else ""
-                lines.append(f"   Intraday: <b>{intra:+.2f}%</b> ${price:.2f}")
-                if extra_line:
-                    lines.append(extra_line)
-
-            cat = g.get("catalyst")
-            benz = g.get("catalyst_benzinga")
-            if benz:
-                lines.append(f"   \U0001f4f0 <i>{benz[:75]}</i> <b>[Benzinga]</b>")
-            elif cat:
-                lines.append(f"   \U0001f4f0 <i>{cat[:75]}</i>")
+        if postopen:
+            lines.append(f"<b>New Post-Open Gappers ({len(postopen)}):</b>")
             lines.append("")
+            for i, g in enumerate(postopen, 1):
+                g["rank"] = i
+                lines.extend(_fmt_gapper(g, is_new=True))
+
+    elif gappers:
+        has_pm = any(g.get("premarket_gap_pct") is not None for g in gappers)
+        if has_pm:
+            lines.append(f"<b>{len(gappers)} gappers found:</b>")
+        else:
+            lines.append(f"<b>{len(gappers)} gappers (market open — intraday data):</b>")
+        lines.append("")
+        for g in gappers:
+            lines.extend(_fmt_gapper(g))
     else:
         lines.append("No gappers after filter (gap>5%, price>$3)")
 
     if merge:
-        lines.append(f"\n<i>Post-open update: Yahoo screener refreshed after market open</i>")
+        lines.append(f"\n<i>Post-open update: Yahoo screener refreshed after market open.</i>")
+        lines.append(f"<i>Premarket gappers preserved — post-open gappers listed separately.</i>")
     else:
         lines.append(f"\n<i>Premarket calculated (4:00-9:30 ET) | Universe: Yahoo Top 100</i>")
         lines.append(f"<i>TJL signals follow at 10:00 ET (Scanner B, at market open)</i>")
