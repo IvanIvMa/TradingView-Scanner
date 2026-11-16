@@ -37,19 +37,31 @@ fi
 #    (Ohne offenen Chart fällt Scanner B still auf Yahoo-Daten zurück.)
 cd "$(dirname "$0")"
 python3 - << 'PYEOF'
-import sys, time
+import sys, time, subprocess
 sys.path.insert(0, ".")
-from position_tracker import try_connect_mcp, send_telegram
-ok = False
-for _ in range(6):                      # bis ~60 s auf geladenen Chart warten
+from position_tracker import try_connect_mcp, send_telegram, _find_node
+
+def chart_ok():
     m = try_connect_mcp()
-    if m:
-        q = m.tool("quote_get") or {}
-        m.close()
-        if isinstance(q, dict) and q.get("success") is not False and q.get("symbol"):
-            ok = True
-            print(f"✅ Chart offen ({q.get('symbol')}) — MCP liefert Live-Daten.")
-            break
+    if not m:
+        return None
+    q = m.tool("quote_get") or {}
+    m.close()
+    if isinstance(q, dict) and q.get("success") is not False and q.get("symbol"):
+        return q.get("symbol")
+    return None
+
+ok = False
+for attempt in range(4):
+    sym = chart_ok()
+    if sym:
+        ok = True
+        print(f"✅ Chart offen ({sym}) — MCP liefert Live-Daten.")
+        break
+    if attempt == 1:                    # nach ~20 s ohne Chart: selbst öffnen
+        print("Kein Chart offen — öffne automatisch NASDAQ:AAPL…")
+        r = subprocess.run([_find_node(), "open_chart.mjs"], capture_output=True, text=True, timeout=90)
+        print("  " + (r.stdout.strip() or r.stderr.strip()[:200]))
     time.sleep(10)
 if not ok:
     print("⚠️ Kein Chart offen — Telegram-Warnung gesendet.")
