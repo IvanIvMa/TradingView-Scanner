@@ -1,46 +1,39 @@
 #!/usr/bin/env python3
 """
-TJL Scanner — Trading Cockpit (Web Dashboard)
+TJL Scanner — Cockpit (lokales Web-Dashboard)
 
-FastAPI backend serving the dashboard UI and JSON APIs.
-Reads scanner output files (premarket_gappers, tjl_watchlist, positions)
-and exposes them as live endpoints.
+Liest nur die Dateien, die Scanner A/B und der Position Tracker schreiben
+(premarket_gappers_*, tjl_watchlist_*, positions_*, Logs, backtest_results.json)
+und zeigt sie an. Löst selbst KEINE Signale und keine Telegram-Nachrichten aus.
 
-Start:  cd dashboard && uvicorn app:app --reload --port 8050
+Start:   cd dashboard && python3 app.py      -> http://localhost:8050
 """
-
-import os, json, glob
+import glob, json, os, sys, urllib.request
 from datetime import datetime
-from zoneinfo import ZoneInfo
 from pathlib import Path
+from zoneinfo import ZoneInfo
 
 from fastapi import FastAPI
+from fastapi.responses import FileResponse
 from fastapi.staticfiles import StaticFiles
-from fastapi.responses import HTMLResponse, FileResponse
-import yfinance as yf
+
+BASE = Path(__file__).resolve().parent.parent
+sys.path.insert(0, str(BASE))
+import tjl_rules as R  # noqa: E402
 
 ET = ZoneInfo("America/New_York")
 BERLIN = ZoneInfo("Europe/Berlin")
-BASE = Path(__file__).resolve().parent.parent
+STATIC = Path(__file__).parent / "static"
 
-app = FastAPI(title="TJL Scanner Cockpit")
-app.mount("/static", StaticFiles(directory=Path(__file__).parent / "static"), name="static")
-
-DEFAULTS = {
-    "PARTIAL_ATR": 1.0,
-    "PARTIAL_PCT": 50,
-    "TRAIL_PCT": 2.0,
-    "ATR_PERIOD": 14,
-    "EOD_HOUR_ET": 15,
-    "EOD_MIN_ET": 45,
-}
+app = FastAPI(title="TJL Cockpit")
+app.mount("/static", StaticFiles(directory=STATIC), name="static")
 
 
-def today_str():
+def today():
     return datetime.now(BERLIN).strftime("%Y-%m-%d")
 
 
-def load_json(path):
+def load(path):
     try:
         with open(path) as f:
             return json.load(f)
@@ -48,147 +41,171 @@ def load_json(path):
         return None
 
 
-@app.get("/", response_class=HTMLResponse)
+def tail(path, n=40):
+    try:
+        with open(path, errors="replace") as f:
+            return f.read().splitlines()[-n:]
+    except Exception:
+        return []
+
+
+def mtime_berlin(path):
+    try:
+        return datetime.fromtimestamp(os.path.getmtime(path), BERLIN)
+    except Exception:
+        return None
+
+
+def latest_watchlist(day):
+    files = sorted(glob.glob(str(BASE / f"tjl_watchlist_{day}_*.json")))
+    return (files[-1], load(files[-1])) if files else (None, None)
+
+
+@app.get("/")
 async def root():
-    return FileResponse(Path(__file__).parent / "static" / "index.html")
+    return FileResponse(STATIC / "cockpit.html")
 
 
-@app.get("/api/status")
-async def api_status():
-    now_et = datetime.now(ET)
-    market_open = now_et.replace(hour=9, minute=30, second=0, microsecond=0)
-    market_close = now_et.replace(hour=16, minute=0, second=0, microsecond=0)
-    is_open = market_open <= now_et <= market_close and now_et.weekday() < 5
-    return {
-        "time_et": now_et.strftime("%H:%M:%S ET"),
-        "time_berlin": datetime.now(BERLIN).strftime("%H:%M:%S"),
-        "date": today_str(),
-        "market_open": is_open,
-        "weekday": now_et.strftime("%A"),
-    }
+@app.get("/api/health")
+async def health():
+    """Läuft alles? Genau das, was beim Ausfall Aug–Nov gefehlt hat."""
+    day, now_et = today(), datetime.now(ET)
+    in_window = now_et.weekday() < 5 and (10, 0) <= (now_et.hour, now_et.minute) <= (15, 45)
+
+    g = load(BASE / f"premarket_gappers_{day}.json")
+    scanner_a = {"ok": g is not None, "time": g.get("scan_time_et") if g else None,
+                 "count": len(g.get("gappers", [])) if g else 0}
+
+    wfile, _ = latest_watchlist(day)
+    wt = mtime_berlin(wfile) if wfile else None
+    age_min = (datetime.now(BERLIN) - wt).total_seconds() / 60 if wt else None
+    stderr = BASE / "launchd_tjl_stderr.log"
+    err_lines = [l for l in tail(stderr, 30) if "Error" in l or "Traceback" in l]
+    st = mtime_berlin(stderr)
+    err_recent = bool(err_lines) and st is not None and st.date() == datetime.now(BERLIN).date() \
+        and (wt is None or st > wt)
+    if in_window and g and g.get("gappers"):
+        b_ok = age_min is not None and age_min <= 40 and not err_recent
+    else:
+        b_ok = not err_recent
+    scanner_b = {"ok": b_ok, "last_run": wt.strftime("%H:%M") if wt else None,
+                 "age_min": round(age_min) if age_min is not None else None,
+                 "error": err_lines[-1] if err_recent else None, "in_window": in_window}
+
+    try:
+        urllib.request.urlopen("http://localhost:9222/json/version", timeout=1)
+        tv = True
+    except Exception:
+        tv = False
+
+    return {"time_et": now_et.strftime("%H:%M:%S"), "time_berlin": datetime.now(BERLIN).strftime("%H:%M:%S"),
+            "date": day, "market_open": now_et.weekday() < 5 and (9, 30) <= (now_et.hour, now_et.minute) < (16, 0),
+            "scanner_a": scanner_a, "scanner_b": scanner_b, "tradingview_cdp": tv,
+            "log_tail": tail(BASE / f"tjl_scanner_{day}.log", 25)}
 
 
-@app.get("/api/gappers")
-async def api_gappers():
-    today = today_str()
-    path = BASE / f"premarket_gappers_{today}.json"
-    data = load_json(path)
-    if not data:
-        return {"date": today, "gappers": [], "count": 0}
-    gappers = data.get("gappers", [])
-    return {"date": today, "gappers": gappers, "count": len(gappers)}
-
-
-@app.get("/api/signals")
-async def api_signals():
-    today = today_str()
-    files = sorted(glob.glob(str(BASE / f"tjl_watchlist_{today}_*.json")), reverse=True)
-    if not files:
-        return {"date": today, "passes": [], "fails": [], "scan_time": None}
-    data = load_json(files[0])
-    if not data:
-        return {"date": today, "passes": [], "fails": [], "scan_time": None}
-    passes = data.get("hits", [])
-    all_results = data.get("all_results", [])
-    fails = [r for r in all_results if r.get("result") not in ("PASS", None)]
-    scan_time = data.get("scan_time_et") or data.get("scan_time") or os.path.basename(files[0]).replace(f"tjl_watchlist_{today}_", "").replace(".json", "")
-    return {"date": today, "passes": passes, "fails": fails, "scan_time": scan_time}
+@app.get("/api/today")
+async def today_view():
+    day = today()
+    g = load(BASE / f"premarket_gappers_{day}.json") or {}
+    _, w = latest_watchlist(day)
+    results = {r["symbol"]: r for r in (w or {}).get("all_results", [])}
+    hits = {h["symbol"]: h for h in (w or {}).get("hits", [])}
+    rows = []
+    for gp in g.get("gappers", []):
+        s = gp["symbol"]
+        r = results.get(s, {})
+        rows.append({"symbol": s, "name": gp.get("name"),
+                     "gap": gp.get("premarket_gap_pct") or gp.get("intraday_gap_pct"),
+                     "price": gp.get("premarket_price") or gp.get("intraday_price"),
+                     "catalyst": gp.get("catalyst"), "result": r.get("result", "—"),
+                     "filters": r.get("filters"), "hit": hits.get(s)})
+    return {"date": day, "scan_time": (w or {}).get("scan_time_et"), "rows": rows}
 
 
 @app.get("/api/positions")
-async def api_positions():
-    today = today_str()
-    path = BASE / f"positions_{today}.json"
-    data = load_json(path)
-    if not data:
-        return {"date": today, "positions": [], "open_count": 0, "closed_count": 0}
-    positions = list(data.values()) if isinstance(data, dict) else data
-    open_pos = [p for p in positions if p.get("status") == "open"]
-    closed_pos = [p for p in positions if p.get("status") == "closed"]
-    return {
-        "date": today,
-        "positions": positions,
-        "open_count": len(open_pos),
-        "closed_count": len(closed_pos),
-    }
+async def positions():
+    data = load(BASE / f"positions_{today()}.json") or {}
+    return {"positions": list(data.values())}
 
 
-@app.get("/api/regime")
-async def api_regime():
-    try:
-        spy_hist = yf.Ticker("SPY").history(period="1y", interval="1d")
-        qqq_hist = yf.Ticker("QQQ").history(period="1y", interval="1d")
-        if spy_hist.empty or qqq_hist.empty:
-            return {"regime": "unknown", "error": "Keine Daten von Yahoo Finance",
-                    "spy": {"close": 0, "sma200": 0, "above": False},
-                    "qqq": {"close": 0, "sma200": 0, "above": False}}
-        spy_close = round(float(spy_hist["Close"].iloc[-1]), 2)
-        qqq_close = round(float(qqq_hist["Close"].iloc[-1]), 2)
-        spy_sma200 = round(float(spy_hist["Close"].tail(200).mean()), 2)
-        qqq_sma200 = round(float(qqq_hist["Close"].tail(200).mean()), 2)
-        spy_above = spy_close > spy_sma200
-        qqq_above = qqq_close > qqq_sma200
-        if spy_above and qqq_above:
-            regime = "tailwind"
-        elif spy_above or qqq_above:
-            regime = "mixed"
-        else:
-            regime = "headwind"
-        return {
-            "regime": regime,
-            "spy": {"close": spy_close, "sma200": spy_sma200, "above": spy_above},
-            "qqq": {"close": qqq_close, "sma200": qqq_sma200, "above": qqq_above},
-        }
-    except Exception as e:
-        return {"regime": "unknown", "error": str(e),
-                "spy": {"close": 0, "sma200": 0, "above": False},
-                "qqq": {"close": 0, "sma200": 0, "above": False}}
+@app.get("/api/performance")
+async def performance():
+    trades = []
+    for f in sorted(glob.glob(str(BASE / "positions_*.json"))):
+        day = os.path.basename(f)[10:20]
+        for p in (load(f) or {}).values():
+            if p.get("status") != "closed" or not p.get("exit_price"):
+                continue
+            pnl = p.get("pnl_pct")
+            new_rules = pnl is not None
+            if pnl is None:
+                pnl = (p["exit_price"] - p["entry_price"]) / p["entry_price"] * 100
+            trades.append({"date": day, "symbol": p["symbol"], "entry_et": p.get("entry_et"),
+                           "entry": p["entry_price"], "exit": p["exit_price"],
+                           "reason": p.get("exit_reason"), "pnl_pct": round(pnl, 2),
+                           "rules": "neu (ATR)" if new_rules else "alt (2 %)"})
+    eq, curve = 100.0, []
+    for t in trades:
+        eq *= 1 + t["pnl_pct"] / 100
+        curve.append({"date": t["date"], "symbol": t["symbol"], "equity": round(eq, 2)})
+
+    def summary(ts):
+        if not ts:
+            return {"n": 0}
+        w = [t for t in ts if t["pnl_pct"] > 0]
+        return {"n": len(ts), "win_pct": round(len(w) / len(ts) * 100, 1),
+                "avg_pct": round(sum(t["pnl_pct"] for t in ts) / len(ts), 2)}
+    return {"trades": trades[::-1], "curve": curve,
+            "old": summary([t for t in trades if t["rules"].startswith("alt")]),
+            "new": summary([t for t in trades if t["rules"].startswith("neu")])}
 
 
-@app.get("/api/history")
-async def api_history():
-    """Recent position files for historical view."""
-    files = sorted(glob.glob(str(BASE / "positions_*.json")), reverse=True)[:10]
-    history = []
-    for f in files:
-        date = os.path.basename(f).replace("positions_", "").replace(".json", "")
-        data = load_json(f)
-        if not data:
-            continue
-        positions = list(data.values()) if isinstance(data, dict) else data
-        wins = sum(1 for p in positions if p.get("status") == "closed" and p.get("exit_price", 0) > p.get("entry_price", 0))
-        losses = sum(1 for p in positions if p.get("status") == "closed" and p.get("exit_price", 0) <= p.get("entry_price", 0))
-        history.append({"date": date, "total": len(positions), "wins": wins, "losses": losses, "positions": positions})
-    return {"days": history}
+@app.get("/api/backtest")
+async def backtest():
+    return load(BASE / "backtest_results.json") or {"table": [], "trades": []}
 
 
-@app.get("/api/params")
-async def api_params():
-    return DEFAULTS.copy()
+@app.get("/api/rules")
+async def rules():
+    return R.PARAMS
 
 
 @app.get("/api/chart/{symbol}")
-async def api_chart(symbol: str, period: str = "1d", interval: str = "1m"):
+async def chart(symbol: str, interval: str = "1m"):
+    """Kerzen des letzten Handelstags + VWAP + Marker aus positions_<heute>.json."""
+    sym = symbol.upper()
     try:
-        data = yf.Ticker(symbol).history(period=period, interval=interval, prepost=True)
-        if data.empty:
-            return {"symbol": symbol, "bars": []}
-        data.index = data.index.tz_convert(ET)
-        bars = []
-        for ts, row in data.iterrows():
-            bars.append({
-                "time": int(ts.timestamp()),
-                "open": round(float(row["Open"]), 2),
-                "high": round(float(row["High"]), 2),
-                "low": round(float(row["Low"]), 2),
-                "close": round(float(row["Close"]), 2),
-                "volume": int(row["Volume"]),
-            })
-        return {"symbol": symbol, "bars": bars}
+        bars = R.df_to_bars(R.load_intraday(sym, period="1d" if interval == "1m" else "5d", interval=interval))
     except Exception as e:
-        return {"symbol": symbol, "bars": [], "error": str(e)}
+        return {"symbol": sym, "bars": [], "error": str(e)}
+    if not bars:
+        return {"symbol": sym, "bars": []}
+    last_day = datetime.fromtimestamp(bars[-1]["t"], ET).date()
+    bars = [b for b in bars if datetime.fromtimestamp(b["t"], ET).date() == last_day]
+    rth = [b for b in bars if R.RTH_OPEN <= datetime.fromtimestamp(b["t"], ET).time() < R.dtime(16)]
+    vw = R.vwap_series(rth)
+    pos = (load(BASE / f"positions_{today()}.json") or {}).get(sym)
+    markers, lines = [], []
+    if pos:
+        markers.append({"t": pos["entry_ts"], "kind": "entry", "price": pos["entry_price"]})
+        if pos.get("vwap_break_ts"):
+            markers.append({"t": pos["vwap_break_ts"], "kind": "vwap_break"})
+        if pos.get("exit_ts"):
+            markers.append({"t": pos["exit_ts"], "kind": "exit", "price": pos.get("exit_price"),
+                            "reason": pos.get("exit_reason")})
+        P = R.PARAMS
+        lines = [{"label": "Einstieg", "price": pos["entry_price"]},
+                 {"label": "Ziel", "price": round(pos["entry_price"] + pos["atr"] * P["PARTIAL_ATR"], 2)},
+                 {"label": "Stop", "price": pos.get("current_stop",
+                                                    round(pos["entry_price"] - pos["atr"] * P["INIT_STOP_ATR"], 2))}]
+    return {"symbol": sym,
+            "bars": [{"time": int(b["t"]), "open": b["open"], "high": b["high"], "low": b["low"],
+                      "close": b["close"], "volume": b["volume"]} for b in bars],
+            "vwap": [{"time": int(b["t"]), "value": round(v, 3)} for b, v in zip(rth, vw)],
+            "markers": markers, "lines": lines}
 
 
 if __name__ == "__main__":
     import uvicorn
-    uvicorn.run(app, host="0.0.0.0", port=8050)
+    uvicorn.run(app, host="127.0.0.1", port=8050)

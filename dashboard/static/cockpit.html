@@ -1,0 +1,83 @@
+<!doctype html>
+<html lang="de">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>TJL Cockpit</title>
+  <link rel="stylesheet" href="/static/cockpit.css">
+  <script src="/static/lightweight-charts.js"></script>
+</head>
+<body>
+<header class="top">
+  <div class="brand">TJL Cockpit</div>
+  <div class="clock"><span id="clock-et">--:--</span> ET · <span id="clock-de">--:--</span> Berlin</div>
+  <div id="market" class="pill">—</div>
+</header>
+
+<main>
+  <section class="health" id="health">
+    <div class="hcard" id="h-a"><div class="hlabel">Scanner A · Gapper</div><div class="hval">—</div><div class="hsub"></div></div>
+    <div class="hcard" id="h-b"><div class="hlabel">Scanner B · Signale</div><div class="hval">—</div><div class="hsub"></div></div>
+    <div class="hcard" id="h-tv"><div class="hlabel">TradingView (optional)</div><div class="hval">—</div><div class="hsub">nur für Chart-Markierung</div></div>
+    <div class="hcard" id="h-pos"><div class="hlabel">Positionen heute</div><div class="hval">—</div><div class="hsub"></div></div>
+  </section>
+
+  <nav class="tabs">
+    <button data-tab="today" class="active">Heute</button>
+    <button data-tab="chart">Chart</button>
+    <button data-tab="perf">Performance</button>
+    <button data-tab="bt">Backtest</button>
+    <button data-tab="log">Log &amp; Regeln</button>
+  </nav>
+
+  <section class="tab" id="tab-today">
+    <h2>Positionen</h2>
+    <div id="positions" class="cards"></div>
+    <h2>Gapper &amp; Scanner-B-Ergebnis <span class="muted" id="scan-time"></span></h2>
+    <p class="note">Filter laufen im <b>Beobachtungsmodus</b>: ⚠️ blockiert kein Signal, zeigt nur, was ein scharfer Filter täte.</p>
+    <div class="tablewrap"><table id="gappers">
+      <thead><tr><th>Symbol</th><th>Gap</th><th>Ergebnis</th><th>über VWAP</th><th>RVOL</th><th>Abstand VWAP (ATR)</th><th>Katalysator</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </section>
+
+  <section class="tab hidden" id="tab-chart">
+    <div class="chartbar">
+      <input id="sym" placeholder="Symbol, z. B. CGON" autocomplete="off">
+      <select id="iv"><option value="1m">1 Min</option><option value="5m">5 Min</option></select>
+      <button id="load">Laden</button>
+      <span class="legend"><i class="sw vwap"></i>VWAP <i class="sw entry"></i>Einstieg <i class="sw stop"></i>Stop <i class="sw tgt"></i>Ziel</span>
+    </div>
+    <div id="chart"></div>
+    <p class="note" id="chart-note"></p>
+  </section>
+
+  <section class="tab hidden" id="tab-perf">
+    <div class="cards" id="perf-sum"></div>
+    <h2>Equity-Kurve (alle Live-Trades, verzinst)</h2>
+    <div id="equity"></div>
+    <h2>Alle Trades</h2>
+    <div class="tablewrap"><table id="trades">
+      <thead><tr><th>Datum</th><th>Symbol</th><th>Einstieg</th><th>Ausstieg</th><th>Grund</th><th>P&amp;L</th><th>Regeln</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </section>
+
+  <section class="tab hidden" id="tab-bt">
+    <p class="note" id="bt-note"></p>
+    <div class="tablewrap"><table id="bt">
+      <thead><tr><th>Einstiege</th><th>Exit-Regel</th><th>n</th><th>Trefferquote</th><th>Ø P&amp;L</th><th>Summe</th><th>Profitfaktor</th></tr></thead>
+      <tbody></tbody>
+    </table></div>
+  </section>
+
+  <section class="tab hidden" id="tab-log">
+    <h2>Aktive Regeln (tjl_rules.py)</h2>
+    <div class="tablewrap"><table id="rules"><tbody></tbody></table></div>
+    <h2>Scanner-B-Log heute</h2>
+    <pre id="log"></pre>
+  </section>
+</main>
+<script src="/static/cockpit.js"></script>
+</body>
+</html>

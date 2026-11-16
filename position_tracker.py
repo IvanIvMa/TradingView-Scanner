@@ -7,7 +7,7 @@ Logik:
     (Einstiegskurs = curr_price beim PASS).
   - Pro Lauf werden alle offenen Positionen überwacht:
       1. Teilgewinn  : Kurs erreicht Einstieg + 1 ATR  → Alert "Teilgewinn (50%), Stop auf Einstieg"
-      2. Trailing Stop: Kurs fällt > TRAIL_PCT unter das Hoch seit Einstieg → Alert "schließen"
+      2. Stop: fest Einstieg - INIT_STOP_ATR*ATR; nach Teilgewinn Trailing TRAIL_ATR*ATR unter Hoch (≥ Einstieg)
       3. EOD-Schluss : ab 15:45 ET → Alert "vor Börsenschluss schließen"
   - Genauigkeit: zwischen zwei Läufen werden ALLE 1-Min-Bars seit Einstieg nachgespielt,
     damit auch ein Trailing-Stop ZWISCHEN den Läufen erkannt wird.
@@ -25,10 +25,11 @@ from zoneinfo import ZoneInfo
 
 import yfinance as yf
 
+sys.path.insert(0, os.path.dirname(os.path.abspath(__file__)))
+import tjl_rules as R  # gemeinsame Regeln (Live = Backtest)
+
 # --- Parameter (Backtest-Standard, anpassbar) ---
-PARTIAL_ATR   = 1.0     # Teilgewinn-Ziel: Einstieg + 1 ATR
-PARTIAL_PCT   = 50      # Teilgewinn-Größe in %
-TRAIL_PCT     = 2.0     # Trailing Stop: % unter dem Hoch seit Einstieg
+# Stop-/Ziel-Parameter: siehe tjl_rules.PARAMS (gemeinsam mit Backtest)
 ATR_PERIOD    = 14      # ATR-Periode (Tagesbasis)
 EOD_HOUR_ET   = 15      # Zwangsschluss-Zeit (ET)
 EOD_MIN_ET    = 45
@@ -265,7 +266,7 @@ def get_today_passes():
             with open(files[0]) as f:
                 data = json.load(f)
             for h in data.get("hits", []):
-                passes[h["symbol"]] = h.get("curr_price")
+                passes[h["symbol"]] = h
         except Exception:
             pass
     return passes
@@ -293,11 +294,8 @@ def main():
     is_eod = (now_et.hour, now_et.minute) >= (EOD_HOUR_ET, EOD_MIN_ET)
 
     # TradingView MCP verbinden (Fallback: Yahoo Finance)
-    mcp = try_connect_mcp()
-    if mcp:
-        print("  Data source: TradingView (MCP live)")
-    else:
-        print("  Data source: Yahoo Finance (fallback)")
+    mcp = None  # Kerzen kommen seit 2026-11-16 immer von Yahoo (gleiche Quelle wie Backtest)
+    print("  Data source: Yahoo Finance 1-min (tjl_rules.py)")
 
     # Zustand laden
     positions = {}
@@ -312,97 +310,72 @@ def main():
 
     # --- 1. Neue Positionen aus PASS-Signalen eröffnen ---
     passes = get_today_passes()
-    for sym, price in passes.items():
-        if sym in positions:
-            continue  # schon beobachtet
-        if price is None:
+    for sym, hit in passes.items():
+        price = hit.get("curr_price")
+        if sym in positions or price is None:
             continue
-        atr = compute_atr(sym) or round(price * 0.02, 2)  # Fallback: 2% des Kurses
+        atr = hit.get("atr") or compute_atr(sym) or round(price * 0.02, 2)
         positions[sym] = {
-            "symbol": sym,
-            "entry_price": price,
-            "entry_ts": now_et.timestamp(),
-            "entry_et": now_et.strftime("%H:%M ET"),
-            "atr": atr,
-            "high_water": price,
-            "partial_alerted": False,
-            "status": "open",
+            "symbol": sym, "entry_price": price,
+            "entry_ts": now_et.timestamp(), "entry_et": now_et.strftime("%H:%M ET"),
+            "atr": atr, "high_water": price, "partial_alerted": False,
+            "vwap_break_alerted": False, "status": "open",
+            "entry_filters": hit.get("filters"), "entry_vwap": hit.get("vwap"),
         }
-        target = round(price + atr, 2)
-        init_stop = round(price * (1 - TRAIL_PCT / 100), 2)
+        P = R.PARAMS
         alerts.append(
             f"👁 <b>{sym} — Tracking started</b>\n"
             f"   Entry ${price}  |  ATR ${atr}\n"
-            f"   Partial profit target: ${target} (+1 ATR)\n"
-            f"   Initial trailing stop: ${init_stop} (-{TRAIL_PCT}%)"
+            f"   Partial profit target: ${round(price + atr * P['PARTIAL_ATR'], 2)} (+{P['PARTIAL_ATR']} ATR)\n"
+            f"   Initial stop: ${round(price - atr * P['INIT_STOP_ATR'], 2)} (-{P['INIT_STOP_ATR']} ATR, fixed until partial)"
         )
 
-    # --- 2. Offene Positionen überwachen ---
+    # --- 2. Offene Positionen überwachen (Regeln aus tjl_rules.py, Yahoo 1-Min) ---
     for sym, pos in positions.items():
         if pos["status"] != "open":
             continue
+        entry, atr = pos["entry_price"], pos["atr"]
+        try:
+            day = [b for b in R.df_to_bars(R.load_intraday(sym, period="1d", interval="1m"))
+                   if datetime.fromtimestamp(b["t"], ET).date() == now_et.date()]
+        except Exception:
+            day = []
+        rth = [b for b in day if R.RTH_OPEN <= datetime.fromtimestamp(b["t"], ET).time()]
+        tr = R.replay_exits(entry, atr, rth, pos["entry_ts"])
+        pos["high_water"] = round(tr.high, 2)
+        pos["current_stop"] = round(tr.stop, 2)
+        last_px = rth[-1]["close"] if rth else entry
+        pos["last_price"] = round(last_px, 2)
 
-        entry = pos["entry_price"]
-        atr   = pos["atr"]
-        bars  = today_intraday_since(sym, pos["entry_ts"], now_et, mcp)
-
-        running_high = max(pos["high_water"], entry)
-        partial_price = entry + atr * PARTIAL_ATR
-        exit_event = None  # (typ, preis, zeit)
-
-        # Bars seit Einstieg nachspielen (erkennt auch Stop ZWISCHEN den Läufen)
-        for b in bars:
-            running_high = max(running_high, b["high"])
-
-            # Teilgewinn erreicht?
-            if not pos["partial_alerted"] and running_high >= partial_price:
-                pos["partial_alerted"] = True
+        if tr.partial_done and not pos["partial_alerted"]:
+            pos["partial_alerted"] = True
+            alerts.append(
+                f"🟡 <b>{sym} — Partial profit target hit</b> @ ${round(tr.target,2)}\n"
+                f"   Strategy: sell {R.PARAMS['PARTIAL_PCT']}%, stop now trails {R.PARAMS['TRAIL_ATR']} ATR (min. entry ${entry})"
+            )
+        if tr.vwap_break_ts and not pos.get("vwap_break_alerted"):
+            pos["vwap_break_alerted"] = True
+            pos["vwap_break_ts"] = tr.vwap_break_ts
+            if not tr.closed:
                 alerts.append(
-                    f"🟡 <b>{sym} — Partial profit target hit</b> @ ${round(partial_price,2)}\n"
-                    f"   Strategy: sell {PARTIAL_PCT}%, move stop to entry ${entry}\n"
-                    f"   <i>(+1 ATR from entry)</i>"
+                    f"🟣 <b>{sym} — 5-min close below VWAP</b> ({fmt_et(tr.vwap_break_ts)})\n"
+                    f"   <i>Beobachtung — kein automatischer Exit (VWAP_EXIT_MODE=observe)</i>"
                 )
 
-            # Trailing Stop: nach Teilgewinn Boden = Einstieg (Breakeven)
-            trail_stop = running_high * (1 - TRAIL_PCT / 100)
-            if pos["partial_alerted"]:
-                trail_stop = max(trail_stop, entry)
-            if b["low"] <= trail_stop:
-                exit_event = ("trailing", round(trail_stop, 2), b["t"])
-                break
-
-        pos["high_water"] = round(running_high, 2)
-
-        # Exit durch Trailing Stop?
-        if exit_event:
-            _, stop_px, t = exit_event
-            pnl_pct = round((stop_px - entry) / entry * 100, 2)
-            sign = "+" if pnl_pct >= 0 else ""
-            pos["status"] = "closed"
-            pos["exit_price"] = stop_px
-            pos["exit_reason"] = "trailing_stop"
-            pos["exit_ts"] = t
+        if tr.closed or is_eod:
+            if not tr.closed:
+                tr.close_eod(last_px, now_et.timestamp())
+            pnl = round(tr.pnl_pct(), 2)
+            pos.update(status="closed", exit_price=round(tr.exit_price, 2),
+                       exit_reason=tr.exit_reason, exit_ts=tr.exit_ts, pnl_pct=pnl)
+            icon = {"eod": "🟠"}.get(tr.exit_reason, "🔴")
             alerts.append(
-                f"🔴 <b>{sym} — Trailing stop triggered</b> @ ${stop_px} ({fmt_et(t)})\n"
+                f"{icon} <b>{sym} — Exit: {tr.exit_reason}</b> @ ${pos['exit_price']} ({fmt_et(tr.exit_ts)})\n"
                 f"   Strategy: close remaining position\n"
-                f"   P&L from entry: <b>{sign}{pnl_pct}%</b> (high was ${pos['high_water']})"
+                f"   P&L incl. partial: <b>{'+' if pnl >= 0 else ''}{pnl}%</b> (high was ${pos['high_water']})"
             )
-            continue
-
-        # Exit durch EOD?
-        if is_eod:
-            curr = bars[-1]["close"] if bars else entry
-            pnl_pct = round((curr - entry) / entry * 100, 2)
-            sign = "+" if pnl_pct >= 0 else ""
-            pos["status"] = "closed"
-            pos["exit_price"] = round(curr, 2)
-            pos["exit_reason"] = "eod"
-            pos["exit_ts"] = now_et.timestamp()
-            alerts.append(
-                f"🟠 <b>{sym} — Market close approaching</b>\n"
-                f"   Strategy: close position (no overnight hold)\n"
-                f"   Current price ${round(curr,2)}  |  P&L from entry: <b>{sign}{pnl_pct}%</b>"
-            )
+        else:
+            pos["pnl_pct"] = round(tr.pnl_pct(last_px), 2)
 
     # MCP-Verbindung schließen
     if mcp:

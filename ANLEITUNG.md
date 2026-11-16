@@ -277,7 +277,7 @@ Ein eigenständiges Programm (`position_tracker.py`), das nach jedem PASS-Signal
 
 **Die drei Exit-Regeln:**
 - 🟡 **Teilgewinn bei +1 ATR** — "50% verkaufen, Stop auf Einstieg nachziehen"
-- 🔴 **Trailing Stop bei -2% vom Hoch** — "Restposition schließen"
+- 🔴 **Stop: fest -0,75 ATR, nach Teilgewinn 0,75 ATR Trailing (mind. Einstieg)** — "Restposition schließen"
 - 🟠 **Zwangsschluss um 15:45 ET** — "vor Börsenschluss schließen, kein Overnight"
 
 **Automatisierung:** Ein zweiter launchd-Job (`com.tradingview.positiontracker`) führt die Überwachung bis Börsenschluss fort (20:30–22:00 Berlin), auch nachdem Scanner B um 20:00 endet — damit der EOD-Ausstieg um 21:45 Berlin (15:45 ET) sicher feuert.

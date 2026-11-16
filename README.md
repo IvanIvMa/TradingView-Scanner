@@ -8,7 +8,7 @@ Automated US stock day-trading scanner with Telegram alerts. Finds premarket gap
 
 1. **Scanner A** (`daily_scanner.sh`) — Scans 5,700+ US stocks for premarket gaps (>5%, >$3, >50K volume), fetches news catalysts
 2. **Scanner B** (`tjl_scanner.sh`) — Checks gappers for Trend Join Long entry signals every 30 min during market hours
-3. **Position Tracker** (`position_tracker.py`) — Monitors open positions for exit signals (partial profit at +1 ATR, trailing stop at -2%, forced close before EOD)
+3. **Position Tracker** (`position_tracker.py`) — Monitors open positions for exit signals (partial profit at +1 ATR, stop at -0.75 ATR, then 0.75 ATR trailing after partial, forced close before EOD)
 
 All alerts are sent via Telegram.
 
@@ -97,6 +97,14 @@ mcp-server/             # TradingView MCP bridge (optional)
 launchd/                # macOS scheduling templates
 ANLEITUNG.md            # Detailed project documentation (German)
 ```
+
+## Rules, backtest & cockpit (since 2026-11-16)
+
+- **`tjl_rules.py`** — single source for entry and exit rules. Used by Scanner B, the position tracker, the backtest and the dashboard, so live and backtest run identical logic. Signals always come from Yahoo (TradingView only for charts).
+- New filters (above VWAP, relative volume ≥ 2, max 1 ATR above VWAP) and the VWAP-break exit run in **observe mode**: computed, stored and shown, but they do not block signals. Switch with `FILTER_MODE` / `VWAP_EXIT_MODE = "enforce"`.
+- **`backtest_exits.py`** — replays the last ~57 days of Scanner A gappers on Yahoo 5-min bars with the same rules → `backtest_results.json`.
+- **Cockpit:** `python3 dashboard/app.py` → http://localhost:8050 (health of Scanner A/B, today's signals with filter values, positions, chart with VWAP/entry/stop, performance, backtest).
+- `tjl_scanner.sh` pins the Python interpreter (`$PYTHON`, default Python.org 3.14). Homebrew `python3` has no yfinance and silently broke Scanner B from 2026-08-31 to 2026-11-16.
 
 ## Data sources
 

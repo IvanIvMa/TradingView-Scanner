@@ -179,7 +179,20 @@ def run_yfinance_fallback():
     if FORCE:
         cmd.append("--force")
     log("TradingView nicht erreichbar — Fallback auf yfinance (tjl_scanner.sh).")
-    subprocess.run(cmd, cwd=BASE)
+    env = dict(os.environ, PYTHON=sys.executable)  # gleiches Python (mit yfinance) im Fallback
+    subprocess.run(cmd, cwd=BASE, env=env)
+
+
+def ensure_tradingview_cdp():
+    """TradingView ohne Debug-Port (z. B. nach Update/manuellem Start) -> mit Port 9222 neu starten."""
+    try:
+        r = subprocess.run(["bash", os.path.join(BASE, "start_tradingview.sh")],
+                           cwd=BASE, capture_output=True, text=True, timeout=120)
+        log("start_tradingview.sh: " + (r.stdout.strip().splitlines() or ["?"])[-1])
+        return r.returncode == 0
+    except Exception as e:
+        log(f"start_tradingview.sh fehlgeschlagen: {str(e)[:60]}")
+        return False
 
 
 def main():
@@ -197,11 +210,23 @@ def main():
         return
     log(f"{len(tickers)} Gappers: {', '.join(tickers)}")
 
-    # 2. MCP starten + Health-Check
+    # 2. Seit 2026-11-16: Signale IMMER über Yahoo + tjl_rules.py (vollständige Daten inkl.
+    #    VWAP/Volumen, identisch mit Backtest). Der TV-Pfad lieferte unvollständige Daten.
+    #    TradingView nur noch für Chart-Markierung -> Debug-Port sicherstellen, dann Yahoo-Pfad.
+    if os.environ.get("USE_TV_SIGNALS") != "1":
+        ensure_tradingview_cdp()
+        log("Signale über Yahoo + tjl_rules.py (TradingView nur für Charts).")
+        cmd = ["bash", os.path.join(BASE, "tjl_scanner.sh")] + (["--force"] if FORCE else [])
+        subprocess.run(cmd, cwd=BASE, env=dict(os.environ, PYTHON=sys.executable))
+        return
+
+    # 2b. Alter TV-Pfad (nur mit USE_TV_SIGNALS=1)
     mcp = MCPClient(MCP_SERVER)
     try:
         mcp.handshake()
         health = mcp.tool("tv_health_check")
+        if (not health or not health.get("cdp_connected")) and ensure_tradingview_cdp():
+            health = mcp.tool("tv_health_check")
         if not health or not health.get("cdp_connected"):
             mcp.close()
             run_yfinance_fallback()

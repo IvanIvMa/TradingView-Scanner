@@ -38,6 +38,9 @@ if [ ! -f .env ]; then
 fi
 export $(grep -v '^#' .env | xargs)
 
+# Festes Python mit yfinance (Homebrew-python3 im PATH hat es nicht -> Ausfall seit 31.08.)
+PY="${PYTHON:-/Library/Frameworks/Python.framework/Versions/3.14/bin/python3}"
+
 DATE=$(date +%Y-%m-%d)
 GAPPERS_FILE="premarket_gappers_${DATE}.json"
 STATE_FILE="tjl_state_${DATE}.json"
@@ -49,7 +52,7 @@ echo "=== TJL Scanner — $DATE $TIME_ET ET ===" | tee -a "$LOG"
 send_telegram() {
     local msg="$1"
     local payload
-    payload=$(python3 -c "import json,sys; print(json.dumps({'chat_id': ${TELEGRAM_CHAT_ID}, 'text': sys.argv[1], 'parse_mode': 'HTML'}))" "$msg")
+    payload=$("$PY" -c "import json,sys; print(json.dumps({'chat_id': ${TELEGRAM_CHAT_ID}, 'text': sys.argv[1], 'parse_mode': 'HTML'}))" "$msg")
     curl -s -X POST "https://api.telegram.org/bot${TELEGRAM_BOT_TOKEN}/sendMessage" \
         -H "Content-Type: application/json" -d "$payload" > /dev/null 2>&1
 }
@@ -57,7 +60,7 @@ send_telegram() {
 # =============================================================================
 # Hauptlogik in Python (yfinance + TJL-Evaluation + State-Management)
 # =============================================================================
-RESULT=$(FORCE=$FORCE MCP_DATA="$MCP_DATA" python3 - "$GAPPERS_FILE" "$STATE_FILE" << 'PYEOF'
+RESULT=$(FORCE=$FORCE MCP_DATA="$MCP_DATA" "$PY" - "$GAPPERS_FILE" "$STATE_FILE" << 'PYEOF'
 import sys, json, os, glob
 from datetime import datetime
 from zoneinfo import ZoneInfo
@@ -101,87 +104,37 @@ else:
     else:
         universe_note = f"{len(tickers)} Gappers von Scanner A"
 
-# --- TJL-Evaluation ---
-def sma(values, period):
-    if len(values) < period:
-        return None
-    return round(sum(values[-period:]) / period, 4)
-
-def evaluate(curr_px, prev_high, prev_close, sma200, pmh, hod):
-    if None in (curr_px, prev_high, prev_close, sma200):
-        return "fail_no_data"
-    daily_breakout = (curr_px > prev_high) and (prev_close > sma200)
-    pmh_ok = (pmh is None) or (curr_px > pmh)
-    hod_ok = (hod is None) or (curr_px > hod)
-    intraday_breakout = pmh_ok and hod_ok and (pmh is not None or hod is not None)
-    if daily_breakout and intraday_breakout:
-        return "PASS"
-    if not daily_breakout:
-        return "fail_daily"
-    return "fail_intraday"
+# --- TJL-Evaluation: Regeln kommen aus tjl_rules.py (gleich wie Backtest) ---
+sys.path.insert(0, os.getcwd())
+import tjl_rules as R
 
 results = []
 hits = []
 
+def record(sym, ev):
+    results.append({"symbol": sym, "result": ev["result"],
+                    "base_result": ev.get("base_result"), "filters": ev.get("filters")})
+    if ev["result"] == "PASS":
+        hits.append({"symbol": sym, **{k: v for k, v in ev.items() if k not in ("result",)}})
+
 if mcp_data:
-    # --- MCP-Modus: TradingView live-Daten von Claude ---
+    # --- MCP-Modus: TradingView-Livedaten (ohne VWAP/Volumen -> Filter = None) ---
     for d in mcp_data:
-        sym = d["symbol"]
-        res = evaluate(d["curr_price"], d["prev_daily_high"], d["prev_daily_close"],
-                       d["sma200"], d.get("pmh"), d.get("hod"))
-        results.append({"symbol": sym, "result": res})
-        if res == "PASS":
-            hits.append({
-                "symbol": sym, "curr_price": d["curr_price"],
-                "prev_daily_high": round(d["prev_daily_high"], 2),
-                "sma200": d["sma200"], "pmh": d.get("pmh"), "today_hod": d.get("hod"),
-            })
+        dctx = {"prev_high": d["prev_daily_high"], "prev_close": d["prev_daily_close"], "sma200": d["sma200"]}
+        ictx = {"curr": d["curr_price"], "pmh": d.get("pmh"), "hod": d.get("hod")}
+        if None in dctx.values() or d["curr_price"] is None:
+            results.append({"symbol": d["symbol"], "result": "fail_no_data"}); continue
+        record(d["symbol"], R.evaluate_entry(dctx, ictx))
 else:
-    # --- yfinance-Modus (Cronjob-Fallback) ---
+    # --- yfinance-Modus ---
+    now_ts = now_et.timestamp()
     for sym in tickers:
         try:
-            t = yf.Ticker(sym)
-
-            daily = t.history(period="2y", interval="1d")
-            if daily.empty or len(daily) < 50:
-                results.append({"symbol": sym, "result": "fail_no_data"})
-                continue
-            daily_idx_et = daily.index.tz_convert(ET) if daily.index.tz else daily.index
-            completed = daily[daily_idx_et.date < now_et.date()]
-            if len(completed) < 50:
-                completed = daily.iloc[:-1] if len(daily) > 1 else daily
-            closes = completed["Close"].tolist()
-            prev_high = float(completed["High"].iloc[-1])
-            prev_close = float(completed["Close"].iloc[-1])
-            sma200 = sma(closes, 200) or sma(closes, min(200, len(closes)))
-
-            intra = t.history(period="2d", interval="1m", prepost=True)
-            pmh = hod = curr_px = None
-            if not intra.empty:
-                intra.index = intra.index.tz_convert(ET)
-                today = intra[intra.index.date == now_et.date()]
-                if not today.empty:
-                    pm = today[(today.index.hour >= 4) &
-                               ((today.index.hour < 9) | ((today.index.hour == 9) & (today.index.minute < 30)))]
-                    rs = today[((today.index.hour > 9) | ((today.index.hour == 9) & (today.index.minute >= 30))) &
-                               (today.index.hour < 16)]
-                    if not pm.empty:
-                        pmh = round(float(pm["High"].max()), 2)
-                    if not rs.empty:
-                        hod = round(float(rs["High"].iloc[:-1].max()), 2) if len(rs) > 1 else round(float(rs["High"].max()), 2)
-                    curr_px = round(float(today["Close"].iloc[-1]), 2)
-            if curr_px is None:
-                fi = t.fast_info
-                curr_px = round(float(fi.get("last_price") or prev_close), 2)
-
-            res = evaluate(curr_px, prev_high, prev_close, sma200, pmh, hod)
-            results.append({"symbol": sym, "result": res})
-            if res == "PASS":
-                hits.append({
-                    "symbol": sym, "curr_price": curr_px,
-                    "prev_daily_high": round(prev_high, 2),
-                    "sma200": sma200, "pmh": pmh, "today_hod": hod,
-                })
+            dctx = R.daily_context(R.load_daily(sym), now_et.date())
+            day = [b for b in R.df_to_bars(R.load_intraday(sym, period="1d", interval="1m"))
+                   if datetime.fromtimestamp(b["t"], ET).date() == now_et.date()]
+            ictx = R.intraday_context(day, now_ts, bar_seconds=60)
+            record(sym, R.evaluate_entry(dctx, ictx))
         except Exception as e:
             results.append({"symbol": sym, "result": "error", "error": str(e)[:60]})
 
@@ -265,15 +218,21 @@ PYEOF
 # =============================================================================
 # Telegram-Nachricht bauen + senden (nur wenn send=true)
 # =============================================================================
-STATUS=$(echo "$RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('status',''))")
+if [ -z "$RESULT" ]; then
+    echo "❌ Python-Teil lieferte kein Ergebnis (Absturz?) — siehe launchd_tjl_stderr.log" | tee -a "$LOG"
+    send_telegram "⚠️ <b>Scanner B Fehler</b> ($DATE $TIME_ET ET): Auswertung abgestürzt, keine Signale. Siehe launchd_tjl_stderr.log"
+    exit 1
+fi
+
+STATUS=$(echo "$RESULT" | "$PY" -c "import json,sys; print(json.load(sys.stdin).get('status',''))")
 
 if [ "$STATUS" = "outside_window" ]; then
-    TET=$(echo "$RESULT" | python3 -c "import json,sys; print(json.load(sys.stdin).get('time_et',''))")
+    TET=$(echo "$RESULT" | "$PY" -c "import json,sys; print(json.load(sys.stdin).get('time_et',''))")
     echo "Außerhalb Handelsfenster ($TET) — kein Lauf. (--force zum Erzwingen)" | tee -a "$LOG"
     exit 0
 fi
 
-echo "$RESULT" | python3 -c "
+echo "$RESULT" | "$PY" -c "
 import json, sys
 d = json.load(sys.stdin)
 print(f\"  Geprüft: {d['checked']} ({d['universe_note']})\")
@@ -282,10 +241,10 @@ for r in d['all_results']:
     print(f\"    {r['symbol']}: {r['result']}\")
 " | tee -a "$LOG"
 
-SEND=$(echo "$RESULT" | python3 -c "import json,sys; print('1' if json.load(sys.stdin).get('send') else '0')")
+SEND=$(echo "$RESULT" | "$PY" -c "import json,sys; print('1' if json.load(sys.stdin).get('send') else '0')")
 
 if [ "$SEND" = "1" ]; then
-    MSG=$(echo "$RESULT" | python3 -c "
+    MSG=$(echo "$RESULT" | "$PY" -c "
 import json, sys
 d = json.load(sys.stdin)
 lines = [f\"🎯 <b>TJL Scanner — {d['time_et']}</b>\"]
@@ -300,6 +259,10 @@ if hits:
         new = ' 🆕' if h['symbol'] in d['new_passes'] else ''
         lines.append(f\"✅ <b>{h['symbol']}</b>{new}  \${h['curr_price']}\")
         lines.append(f\"   Prev high \${h['prev_daily_high']} | PMH \${h.get('pmh','—')} | HOD \${h.get('today_hod','—')} | SMA200 \${h['sma200']}\")
+        f = h.get('filters') or {}
+        if f:
+            ok = lambda x: '✅' if x else '⚠️'
+            lines.append(f\"   Filter (Beobachtung): VWAP {ok(f.get('above_vwap'))} | RVOL {f.get('rvol')} {ok(f.get('rvol_ok'))} | Abstand {f.get('ext_atr')} ATR {ok(f.get('ext_ok'))}\")
 else:
     lines.append('No PASS signals in this run.')
     fails = {}
@@ -323,6 +286,6 @@ fi
 echo "--- Schritt 4: Exit-Überwachung ---" | tee -a "$LOG"
 FORCE_FLAG=""
 [ "$FORCE" = "1" ] && FORCE_FLAG="--force"
-python3 "$(dirname "$0")/position_tracker.py" $FORCE_FLAG 2>&1 | tee -a "$LOG"
+"$PY" "$(dirname "$0")/position_tracker.py" $FORCE_FLAG 2>&1 | tee -a "$LOG"
 
 echo "=== TJL Scanner fertig ===" | tee -a "$LOG"
