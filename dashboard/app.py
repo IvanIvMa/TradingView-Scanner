@@ -13,8 +13,8 @@ from datetime import datetime
 from pathlib import Path
 from zoneinfo import ZoneInfo
 
-from fastapi import FastAPI
-from fastapi.responses import FileResponse
+from fastapi import FastAPI, Request
+from fastapi.responses import FileResponse, JSONResponse
 from fastapi.staticfiles import StaticFiles
 
 BASE = Path(__file__).resolve().parent.parent
@@ -168,7 +168,32 @@ async def backtest():
 
 @app.get("/api/rules")
 async def rules():
-    return R.PARAMS
+    return R.reload_params()
+
+
+import params_store as PS  # noqa: E402
+
+
+@app.get("/api/params")
+async def params_get():
+    return {"params": PS.schema_list()}
+
+
+@app.post("/api/params")
+async def params_post(request: Request):
+    # Nur JSON (Cross-Site-Formulare können das nicht ohne Preflight senden)
+    if "application/json" not in request.headers.get("content-type", ""):
+        return JSONResponse({"ok": False, "error": "JSON erwartet"}, status_code=415)
+    body = await request.json()
+    try:
+        if body.get("reset"):
+            PS.save({k: s[3] for k, s in PS.SCHEMA.items()})
+        else:
+            PS.save(body.get("values") or {})
+    except (ValueError, TypeError) as e:
+        return JSONResponse({"ok": False, "error": str(e)}, status_code=400)
+    R.reload_params()
+    return {"ok": True, "params": PS.schema_list()}
 
 
 @app.get("/api/chart/{symbol}")

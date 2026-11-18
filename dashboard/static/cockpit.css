@@ -74,7 +74,26 @@ input, select, .chartbar button { font: inherit; padding: 6px 10px; border: 1px 
 pre#log { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 12px;
   overflow-x: auto; font-size: 12px; max-height: 420px; }
 
+.pgroup { background: var(--panel); border: 1px solid var(--line); border-radius: 8px; padding: 4px 14px; margin-bottom: 12px; }
+.pgroup h3 { font-size: 13px; margin: 10px 0 4px; }
+.prow { display: grid; grid-template-columns: minmax(160px, 1fr) 150px minmax(120px, 1.2fr); gap: 4px 14px;
+  align-items: center; padding: 8px 0; border-top: 1px solid var(--line); }
+.prow:first-of-type { border-top: 0; }
+.prow label { font-weight: 600; }
+.prow .help { color: var(--muted); font-size: 12px; }
+.prow input, .prow select { width: 100%; }
+.prow.changed label::after { content: " ●"; color: var(--amber); }
+.prow.invalid input { border-color: var(--red); }
+.formbar { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; margin-top: 8px; }
+.formbar button { font: inherit; padding: 6px 12px; border: 1px solid var(--line); border-radius: 6px;
+  background: var(--panel); color: var(--text); cursor: pointer; }
+.formbar button.primary { background: var(--blue); color: #fff; border-color: var(--blue); }
+.formbar button:disabled { opacity: .5; cursor: default; }
+.ok-msg { color: var(--green); } .err-msg { color: var(--red); }
+
 @media (max-width: 760px) {
+  .prow { grid-template-columns: 1fr 120px; }
+  .prow .help { grid-column: 1 / -1; }
   main { padding: 12px 16px 32px; }
   .health { grid-template-columns: repeat(2, 1fr); }
   .top { flex-wrap: wrap; gap: 8px; padding: 10px 16px; }

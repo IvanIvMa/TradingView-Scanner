@@ -24,6 +24,7 @@ function showTab(name) {
   if (name === "perf") loadPerf();
   if (name === "bt") loadBacktest();
   if (name === "log") loadLog();
+  if (name === "params") loadParams();
   if (name === "chart" && !chart) loadChart();
 }
 
@@ -184,6 +185,66 @@ async function loadLog() {
   if (r) $("#rules tbody").innerHTML = Object.entries(r).map(([k, v]) => `<tr><td><code>${esc(k)}</code></td><td>${esc(v)}</td></tr>`).join("");
   $("#log").textContent = (lastHealth?.log_tail || []).join("\n") || "Heute noch kein Scanner-B-Lauf.";
 }
+
+// ---------- Suchkriterien ----------
+const GROUPS = { scanner_a: "Scanner A · Gapper-Suche", entry: "Scanner B · Einstieg (TJL)", exit: "Ausstieg · Position Tracker" };
+let params = [];
+function renderParams() {
+  $("#params-groups").innerHTML = Object.entries(GROUPS).map(([g, title]) => `
+    <div class="pgroup"><h3>${title}</h3>${params.filter((p) => p.group === g).map((p) => {
+      const id = `p-${p.key}`;
+      const input = p.type === "choice"
+        ? `<select id="${id}" name="${p.key}">${p.choices.map((c) => `<option ${c === p.value ? "selected" : ""}>${esc(c)}</option>`).join("")}</select>`
+        : p.type === "time"
+        ? `<input id="${id}" name="${p.key}" type="time" min="${p.min}" max="${p.max}" value="${esc(p.value)}">`
+        : `<input id="${id}" name="${p.key}" type="number" inputmode="decimal" min="${p.min}" max="${p.max}"
+             step="${p.type === "int" ? 1 : "any"}" value="${esc(p.value)}">`;
+      return `<div class="prow ${p.value !== p.default ? "changed" : ""}" data-key="${p.key}">
+        <label for="${id}">${esc(p.label)}</label>${input}
+        <span class="help">${esc(p.help)} · Standard ${esc(p.default)}${p.min != null && p.type !== "time" ? ` · ${p.min}–${p.max}` : ""}</span></div>`;
+    }).join("")}</div>`).join("");
+  $("#params-groups").querySelectorAll("input,select").forEach((el) => el.addEventListener("input", markDirty));
+}
+function formValues() {
+  const v = {};
+  params.forEach((p) => {
+    const raw = $(`#p-${p.key}`).value;
+    v[p.key] = p.type === "int" || p.type === "float" ? (raw === "" ? NaN : Number(raw)) : raw;
+  });
+  return v;
+}
+function markDirty() {
+  const v = formValues();
+  params.forEach((p) => {
+    const row = $(`.prow[data-key="${p.key}"]`);
+    row.classList.toggle("changed", String(v[p.key]) !== String(p.default));
+    row.classList.toggle("invalid", !$(`#p-${p.key}`).checkValidity() || Number.isNaN(v[p.key]));
+  });
+  $("#params-msg").textContent = ""; $("#params-msg").className = "note";
+}
+function msg(text, ok) { const m = $("#params-msg"); m.textContent = text; m.className = `note ${ok ? "ok-msg" : "err-msg"}`; }
+async function loadParams() {
+  const d = await get("/api/params");
+  if (!d) { msg("Cockpit-Server nicht erreichbar.", false); return; }
+  params = d.params; renderParams();
+}
+async function postParams(body) {
+  try {
+    const r = await fetch("/api/params", { method: "POST", headers: { "Content-Type": "application/json" }, body: JSON.stringify(body) });
+    const d = await r.json();
+    if (!d.ok) return msg(d.error || "Fehler beim Speichern.", false);
+    params = d.params; renderParams(); msg("Gespeichert — gilt ab dem nächsten Lauf.", true);
+  } catch { msg("Cockpit-Server nicht erreichbar.", false); }
+}
+$("#params-form").addEventListener("submit", (e) => {
+  e.preventDefault();
+  if ($("#params-form .prow.invalid")) return msg("Bitte rot markierte Werte korrigieren.", false);
+  postParams({ values: formValues() });
+});
+$("#params-undo").addEventListener("click", () => { renderParams(); msg("Änderungen verworfen.", true); });
+$("#params-reset").addEventListener("click", () => {
+  if (confirm("Alle Suchkriterien auf Standard zurücksetzen?")) postParams({ reset: true });
+});
 
 // ---------- Start ----------
 async function refresh() { await loadHealth(); await loadToday(); }

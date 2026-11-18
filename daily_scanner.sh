@@ -126,10 +126,16 @@ ET = ZoneInfo("America/New_York")
 outfile = sys.argv[1]
 merge_mode = os.environ.get("MERGE_FLAG") == "1"
 
-MIN_GAP = 5.0
-MIN_PRICE = 3.0
-MIN_VOLUME = 50_000
-TOP_N = 10
+# Suchkriterien: editierbar im Cockpit (scanner_params.json), Defaults in params_store.py
+MIN_GAP, MIN_PRICE, MIN_VOLUME, TOP_N = 5.0, 3.0, 50_000, 10
+try:
+    sys.path.insert(0, os.getcwd())
+    sys.path.insert(0, os.path.expanduser("~/TradingViewScanner"))
+    import params_store
+    _p = params_store.load("scanner_a")
+    MIN_GAP, MIN_PRICE, MIN_VOLUME, TOP_N = _p["MIN_GAP"], _p["MIN_PRICE"], _p["MIN_VOLUME"], _p["TOP_N"]
+except Exception as _e:
+    print(f"params_store nicht lesbar ({_e}) — Defaults", file=sys.stderr)
 
 # Im Merge-Modus: bestehende Ticker laden um Duplikate zu vermeiden
 existing_symbols = set()

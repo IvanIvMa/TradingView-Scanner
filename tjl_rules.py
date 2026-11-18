@@ -32,6 +32,23 @@ PARAMS = {
     "ATR_PERIOD":     14,
 }
 
+# Werte aus dem Cockpit (scanner_params.json) überschreiben die Defaults oben.
+try:
+    import os as _os, sys as _sys
+    _sys.path.insert(0, _os.path.dirname(_os.path.abspath(__file__)))
+    import params_store as _ps
+    PARAMS.update({k: v for k, v in _ps.load().items() if k in PARAMS})
+except Exception:
+    pass
+
+
+def reload_params():
+    """Für langlebige Prozesse (Cockpit): Werte neu einlesen, PARAMS in place aktualisieren."""
+    import params_store as ps
+    PARAMS.update({k: v for k, v in ps.load().items() if k in PARAMS})
+    return PARAMS
+
+
 RTH_OPEN = dtime(9, 30)
 
 

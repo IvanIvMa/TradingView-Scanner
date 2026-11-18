@@ -27,6 +27,7 @@
     <button data-tab="chart">Chart</button>
     <button data-tab="perf">Performance</button>
     <button data-tab="bt">Backtest</button>
+    <button data-tab="params">Suchkriterien</button>
     <button data-tab="log">Log &amp; Regeln</button>
   </nav>
 
@@ -69,6 +70,20 @@
       <thead><tr><th>Einstiege</th><th>Exit-Regel</th><th>n</th><th>Trefferquote</th><th>Ø P&amp;L</th><th>Summe</th><th>Profitfaktor</th></tr></thead>
       <tbody></tbody>
     </table></div>
+  </section>
+
+  <section class="tab hidden" id="tab-params">
+    <p class="note">Änderungen gelten ab dem <b>nächsten</b> Scanner-Lauf. Geänderte Werte sind markiert; „Standard“ zeigt den Ausgangswert.
+      Neue Werte ändern auch die Exits bereits offener Positionen beim nächsten Tracker-Lauf.</p>
+    <form id="params-form" novalidate>
+      <div id="params-groups"></div>
+      <div class="formbar">
+        <button type="submit" class="primary">Speichern</button>
+        <button type="button" id="params-undo">Verwerfen</button>
+        <button type="button" id="params-reset">Alle auf Standard</button>
+        <span id="params-msg" class="note" role="status"></span>
+      </div>
+    </form>
   </section>
 
   <section class="tab hidden" id="tab-log">
